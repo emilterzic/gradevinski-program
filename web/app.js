@@ -289,7 +289,7 @@ async function renderThumbs() {
   const box = $('#pages');
   const key = (P.pdf?.url || P.pdf?.name || '') + '|' + (pdfDoc?.numPages || 0) + '|' + P.id;
   if (key === thumbsKey && pdfDoc) {
-    $$('.pg', box).forEach((b, k) => { const i = k + 1; b.setAttribute('aria-current', String(i === curPage)); const cnt = P.meas.filter((m) => m.page === i).length; $('span', b).textContent = (pageInfo[i]?.ratio ? '1:' + pageInfo[i].ratio : 'mjerilo ?') + (cnt ? ' · ' + cnt + ' izmjera' : ''); });
+    $$('.pg[data-page]', box).forEach((b, k) => { const i = k + 1; b.setAttribute('aria-current', String(i === curPage)); const cnt = P.meas.filter((m) => m.page === i).length; $('span', b).textContent = (pageInfo[i]?.ratio ? '1:' + pageInfo[i].ratio : 'mjerilo ?') + (cnt ? ' · ' + cnt + ' izmjera' : ''); });
     return;
   }
   thumbsKey = pdfDoc ? key : '';
@@ -302,7 +302,7 @@ async function renderThumbs() {
   if (!pdfDoc) return;
   for (let i = 1; i <= pdfDoc.numPages; i++) {
     const b = document.createElement('button');
-    b.className = 'pg'; b.setAttribute('aria-current', String(i === curPage));
+    b.className = 'pg'; b.dataset.page = i; b.setAttribute('aria-current', String(i === curPage));
     const cnt = P.meas.filter((m) => m.page === i).length;
     b.innerHTML = `<canvas width="140" height="190"></canvas><b>${i}. ${esc(pageInfo[i]?.title || '')}</b><span>${pageInfo[i]?.ratio ? '1:' + pageInfo[i].ratio : 'mjerilo ?'}${cnt ? ' · ' + cnt + ' izmjera' : ''}</span>`;
     b.onclick = () => { curPage = i; cancelDraw(); renderNacrt(); };
@@ -312,6 +312,9 @@ async function renderThumbs() {
       const c = $('canvas', b); c.width = vp.width; c.height = vp.height; page.render({ canvasContext: c.getContext('2d'), viewport: vp });
     });
   }
+  const v3 = document.createElement('button'); v3.className = 'pg v3d-card';
+  v3.innerHTML = '<b>3D vizualizacija objekta</b><span>Pogled sa svih strana, faze gradnje i slike visoke rezolucije</span>';
+  v3.onclick = () => showView('3d'); box.append(v3);
 }
 
 /* ---------- mjerenje ---------- */
@@ -872,6 +875,113 @@ function renderUgovor() {
   doc.oninput = () => { P.contract.html = doc.innerHTML; if (!P.contract.edited) { P.contract.edited = true; } touch(false); };
 }
 
+
+/* ---------- 3D PRIKAZ ---------- */
+let VZ = null, V = null, v3dStage = 5;
+const STAGES3D = [
+  { n: 'Iskop', ph: ['pripremni', 'iskop'] }, { n: 'Temelji', ph: ['temelji'] }, { n: 'Konstrukcija', ph: ['konstrukcija'] },
+  { n: 'Krovište', ph: ['krov'] }, { n: 'Fasada i stolarija', ph: ['fasada', 'instalacije'] }, { n: 'Gotov objekt', ph: ['zavrsni'] },
+];
+const PARTS3D = {
+  iskop: { n: 'Iskop i zemljani radovi', f: (i) => i.group === 'g02' },
+  temelji: { n: 'Temelji i podna ploča', f: (i) => i.phase === 'temelji' },
+  zidovi: { n: 'Zidovi', f: (i) => i.group === 'g04' },
+  konstrukcija: { n: 'AB konstrukcija', f: (i) => i.group === 'g03' && i.phase !== 'temelji' },
+  fasada: { n: 'Fasada', f: (i) => i.group === 'g09' || (i.group === 'g04' && /vanjsk/i.test(i.desc)) },
+  krov: { n: 'Krovište i pokrov', f: (i) => i.group === 'g06' || i.group === 'g07' },
+  limarija: { n: 'Limarija (oluci, opšavi)', f: (i) => i.group === 'g08' },
+  stolarija: { n: 'Prozori i vrata', f: (i) => i.group === 'g10' },
+  balkon: { n: 'Balkon', f: (i) => /balkon|ograd/i.test(i.desc) },
+  okolis: { n: 'Gradilište i okoliš', f: (i) => i.group === 'g01' || i.group === 'g14' },
+};
+const COLOR_LBL = [['fasada', 'Fasada'], ['cokl', 'Podnožje'], ['krov', 'Krov (crijep)'], ['stolarija', 'Stolarija'], ['limarija', 'Limarija'], ['teren', 'Travnjak']];
+function stagePhaseIds(i) { const known = STAGES3D.flatMap((s) => s.ph); return i === STAGES3D.length - 1 ? STAGES3D[i].ph.concat(P.phases.map((p) => p.id).filter((id) => !known.includes(id))) : STAGES3D[i].ph; }
+function v3dViews() {
+  const m = P.model, out = []; let last = '';
+  (m.labels || []).forEach((l, i) => { if (i < m.fp.length && l !== last) out.push([i, l.replace('Pročelje ', '')]); last = l; });
+  if (!out.length) m.fp.forEach((_, i) => out.push([i, 'Pročelje ' + (i + 1)]));
+  return out.concat([['persp', 'Perspektiva'], ['top', 'Odozgo']]);
+}
+async function render3D() {
+  try { if (!VZ) VZ = await import('./viz3d.js'); }
+  catch (e) { console.warn(e); $('#v3dLoad').textContent = '3D prikaz se nije mogao učitati u ovom pregledniku.'; return; }
+  if (!P.model) { P.model = P.pdf?.demo ? VZ.demoModel() : VZ.autoModel(P.modelDims || {}); touch(false); }
+  if (!V) {
+    try { V = new VZ.Viz3D($('#v3dHost'), { onPick: show3dInfo }); }
+    catch (e) { console.warn(e); $('#v3dLoad').textContent = 'Ovaj preglednik ne podržava WebGL 3D prikaz.'; return; }
+    $('#v3dLoad')?.remove();
+  }
+  V.resize();
+  if (V.model !== P.model) { V.viewed = false; V.stage = v3dStage; V.build(P.model); }
+  renderSide3d(); renderStages3d();
+}
+function renderStages3d() {
+  const t = totals(); let cum = 0;
+  $('#v3dStages').innerHTML = STAGES3D.map((s, i) => {
+    const ids = stagePhaseIds(i), sum = ids.reduce((a, id) => a + (t.byPhase[id] || 0), 0); cum += sum;
+    const n = P.items.filter((it) => ids.includes(it.phase)).length;
+    return `<button data-st="${i}" class="${i < v3dStage ? 'done' : ''}" aria-current="${i === v3dStage}"><b>${i + 1}. ${esc(s.n)}</b><span>${t.sum ? 'do sada ' + eur(cum) : n + ' stavki'}</span></button>`;
+  }).join('');
+  $$('#v3dStages [data-st]').forEach((b) => b.onclick = () => { v3dStage = +b.dataset.st; V?.setStage(v3dStage); renderStages3d(); });
+}
+function renderSide3d() {
+  const m = P.model, C = m.colors, auto = m.src === 'auto', d = P.modelDims || {};
+  const nOpen = m.openings.length;
+  $('#v3dSide').innerHTML = `
+  <div><h3>Pogled</h3><div class="viewgrid" style="margin-top:6px">${v3dViews().map(([k, l]) => `<button class="btn small" data-vw="${k}">${esc(l)}</button>`).join('')}</div>
+    <p class="note" style="margin-top:6px">Mišem okreći model, kotačićem približi. Klikni dio kuće (krov, fasadu, prozor) i vidjet ćeš njegove stavke iz troškovnika.</p></div>
+  <div class="box"><h3>Slike visoke rezolucije</h3>
+    <label class="note" for="v3dRes">Rezolucija</label>
+    <select id="v3dRes" class="btn"><option value="2560x1440" selected>2560 × 1440 (QHD, preporučeno)</option><option value="3200x1800">3200 × 1800 (vrlo oštro)</option><option value="1920x1080">1920 × 1080 (Full HD)</option></select>
+    <button class="btn primary" id="v3dShot">Spremi trenutni pogled (PNG)</button>
+    <button class="btn" id="v3dAll">Spremi sva pročelja i perspektivu</button></div>
+  <div><h3>Boje</h3><div class="viewgrid" style="margin:6px 0 8px">${VZ.COLOR_PRESETS.map((p, i) => `<button class="btn small" data-pre="${i}" title="${esc(p.n)}">${esc(p.n.split(' (')[0])}</button>`).join('')}</div>
+    <div class="swatches">${COLOR_LBL.map(([k, l]) => `<label for="c_${k}"><input type="color" id="c_${k}" data-col="${k}" value="${esc(C[k] || VZ.DEFAULT_COLORS[k])}">${l}</label>`).join('')}</div></div>
+  <div class="box"><h3>Model</h3>
+    ${auto ? `<p class="note">Okvirni model iz dimenzija. Prozori su raspoređeni okvirno.</p>
+      <div class="swatches">${[['W', 'Širina (m)', 10], ['D', 'Dubina (m)', 8], ['floors', 'Etaže', 2], ['storeyH', 'Visina etaže (m)', 2.9], ['pitch', 'Nagib krova (°)', 30], ['ov', 'Prepust (m)', 0.6]].map(([k, l, dv]) => `<label for="md_${k}" style="flex-direction:column;align-items:flex-start;gap:2px">${l}<input class="btn" style="width:100%" id="md_${k}" data-md="${k}" inputmode="decimal" value="${fq(d[k] ?? dv)}"></label>`).join('')}</div>
+      <button class="btn" id="v3dApply">Primijeni dimenzije</button>`
+    : `<p class="note">Model je složen iz nacrta: tlocrti, presjek 1-1 i pročelja (1:100). Tlocrt ${fq(bboxW(m))} × ${fq(bboxD(m))} m, streha +${fq(m.eave)}, sljeme +${fq(m.ridge)}, ${nOpen} otvora, balkon i nadstrešnica.</p>`}
+    <button class="btn small" id="v3dSwitch">${auto && P.pdf?.demo ? 'Vrati model iz nacrta' : 'Okvirni model iz dimenzija'}</button></div>`;
+  $$('[data-vw]').forEach((b) => b.onclick = () => V.view(isNaN(+b.dataset.vw) ? b.dataset.vw : +b.dataset.vw));
+  $$('[data-pre]').forEach((b) => b.onclick = () => { Object.assign(P.model.colors, VZ.COLOR_PRESETS[b.dataset.pre].c); V.build(P.model); touch(false); renderSide3d(); });
+  $$('[data-col]').forEach((inp) => inp.oninput = () => { clearTimeout(inp._t); inp._t = setTimeout(() => { P.model.colors[inp.dataset.col] = inp.value; V.build(P.model); touch(false); }, 120); });
+  $('#v3dShot').onclick = () => shot3d(null);
+  $('#v3dAll').onclick = () => shotAll3d();
+  const ap = $('#v3dApply'); if (ap) ap.onclick = () => { const nd = {}; $$('[data-md]').forEach((i) => { const v = parseNum(i.value); if (v) nd[i.dataset.md] = v; }); P.modelDims = nd; const cols = P.model.colors; P.model = VZ.autoModel(nd); P.model.colors = cols; touch(false); render3D(); };
+  $('#v3dSwitch').onclick = () => { const cols = P.model.colors; P.model = (auto && P.pdf?.demo) ? VZ.demoModel() : VZ.autoModel(P.modelDims || {}); P.model.colors = cols; touch(false); render3D(); };
+}
+function bboxW(m) { const xs = m.fp.map((p) => p[0]); return r2(Math.max(...xs) - Math.min(...xs)); }
+function bboxD(m) { const zs = m.fp.map((p) => p[1]); return r2(Math.max(...zs) - Math.min(...zs)); }
+function show3dInfo(part) {
+  const box = $('#v3dInfo');
+  if (!part || !PARTS3D[part]) { box.hidden = true; return; }
+  const def = PARTS3D[part], its = P.items.filter(def.f), sum = its.reduce((a, i) => a + (i.qty || 0) * (i.price || 0), 0);
+  box.hidden = false;
+  box.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><b>${esc(def.n)}</b><span class="spacer"></span><button class="icon-btn" id="v3dInfoX" aria-label="Zatvori">×</button></div>
+  ${its.length ? `<table>${its.map((i) => `<tr><td>${esc(i.desc)} ${i.status === 'ai' ? '<span class="pill ai">AI</span>' : ''}</td><td class="n">${fq(i.qty)} ${esc(i.unit)}</td><td class="n">${i.price ? nf2.format((i.qty || 0) * i.price) + ' €' : '–'}</td></tr>`).join('')}</table>
+  <div style="display:flex;justify-content:space-between"><span class="note">${its.length} stavki</span><b>${sum ? eur(sum) + ' bez PDV-a' : 'cijene nisu upisane'}</b></div>` : '<p class="note">U troškovniku još nema stavki za ovaj dio.</p>'}
+  <div style="display:flex;gap:6px"><button class="btn small" id="v3dGoT">Otvori u troškovniku</button><button class="btn small ai" id="v3dAskAi">Pitaj AI</button></div>`;
+  $('#v3dInfoX').onclick = () => { box.hidden = true; };
+  $('#v3dGoT').onclick = () => { filters.q = ''; showView('troskovnik'); };
+  $('#v3dAskAi').onclick = () => { openChat(); $('#chatInput').value = `${def.n}: `; $('#chatInput').focus(); };
+}
+function shotCaption(label) {
+  const t = totals();
+  return `${P.name}\n${label} · ${t.sum ? 'troškovnik ' + eur(t.total) + ' s PDV-om' : 'prema nacrtima i troškovniku'} · ${new Date().toLocaleDateString('hr-HR')}`;
+}
+async function shot3d(label) {
+  if (!V) return;
+  const [w, h] = $('#v3dRes').value.split('x').map(Number);
+  setSave('Izrađujem sliku…');
+  const blob = await V.snapshot(w, h, shotCaption(label || 'Pogled'));
+  setSave('Slika je spremna');
+  await saveFile(`3D_${safeName(P.name)}_${safeName(label || 'pogled')}.png`, blob, 'image/png');
+}
+async function shotAll3d() {
+  for (const [k, l] of v3dViews().filter(([k]) => k !== 'top')) { V.view(isNaN(+k) ? k : +k); await new Promise((r) => setTimeout(r, 900)); await shot3d(l); }
+}
+
 /* ---------- AI asistent ---------- */
 const CHIPS = [
   { t: 'Predloži količine s nacrta', strong: true, run: () => aiFromPage() },
@@ -880,6 +990,7 @@ const CHIPS = [
   { t: 'Dodaj fazu…', fill: 'Dodaj fazu gradnje: ' },
   { t: 'Što nedostaje u troškovniku?', send: 'Pregledaj troškovnik za ovu građevinu i reci koje stavke nedostaju od iskopa do fasade. Dodaj ih kao AI prijedloge s obrazloženjem količine.' },
   { t: 'Procijeni cijene', send: 'Za stavke bez cijene upiši okvirne jedinične cijene u EUR bez PDV-a za Zagreb 2026. Označi ih kao AI procjenu i reci koliko su pouzdane.' },
+  { t: 'Prikaži 3D', run: () => showView('3d') },
   { t: 'Napravi ugovor', run: () => { P.contract = null; showView('ugovor'); addMsg('assistant', 'Ugovor je generiran iz troškovnika (kartica Ugovor). Upiši podatke stranaka lijevo, a ja ga mogu provjeriti ako klikneš „AI: provjeri i doradi ugovor”.'); } },
 ];
 function openChat() { $('#chat').classList.remove('hidden'); try { localStorage.setItem('gp.chat', '1'); } catch {} }
@@ -931,6 +1042,11 @@ function aiTools() {
     { name: 'popis_nacrta', description: 'Popis stranica nacrta s nazivom i mjerilom.', inputSchema: { type: 'object', properties: {} }, execute: () => pdfDoc ? Object.entries(pageInfo).map(([k, v]) => ({ stranica: Number(k), naziv: v.title, mjerilo: v.ratio ? '1:' + v.ratio : null })) : [] },
     { name: 'podaci_projekta', description: 'Upiši podatke projekta za ugovor (investitor, izvođač, OIB, adrese, lokacija, građevina, rok u danima, jamstva).', inputSchema: { type: 'object', properties: { investitor: { type: 'string' }, investitorOib: { type: 'string' }, investitorAdr: { type: 'string' }, izvodjac: { type: 'string' }, izvodjacOib: { type: 'string' }, izvodjacAdr: { type: 'string' }, gradjevina: { type: 'string' }, lokacija: { type: 'string' }, nadzor: { type: 'string' }, trajanjeDana: { type: 'number' } } },
       execute: (a) => { Object.entries(a || {}).forEach(([k, v]) => { if (k in P.meta) P.meta[k] = v; }); if (P.contract && !P.contract.edited) P.contract.html = contractHtml(); aiLog.push('✎ podaci projekta: ' + Object.keys(a || {}).join(', ')); touch(); return { ok: true }; } },
+    { name: 'model_3d', description: 'Promijeni 3D prikaz objekta: boje (hex, npr. #d9d8d4) za fasada, cokl, krov, stolarija, limarija, teren; ili okvirne dimenzije (sirina, dubina, etaze, visinaEtaze, nagib) za okvirni model.', inputSchema: { type: 'object', properties: { boje: { type: 'object', properties: { fasada: { type: 'string' }, cokl: { type: 'string' }, krov: { type: 'string' }, stolarija: { type: 'string' }, limarija: { type: 'string' }, teren: { type: 'string' } } }, dimenzije: { type: 'object', properties: { sirina: { type: 'number' }, dubina: { type: 'number' }, etaze: { type: 'number' }, visinaEtaze: { type: 'number' }, nagib: { type: 'number' } } } } },
+      execute: async (a = {}) => { if (!VZ) VZ = await import('./viz3d.js'); if (!P.model) P.model = P.pdf?.demo ? VZ.demoModel() : VZ.autoModel(P.modelDims || {});
+        if (a.dimenzije) { const d = a.dimenzije; P.modelDims = { W: d.sirina, D: d.dubina, floors: d.etaze, storeyH: d.visinaEtaze, pitch: d.nagib }; Object.keys(P.modelDims).forEach((k) => P.modelDims[k] == null && delete P.modelDims[k]); const cols = P.model.colors; P.model = VZ.autoModel(P.modelDims); P.model.colors = cols; aiLog.push('3D: okvirni model ' + JSON.stringify(P.modelDims)); }
+        if (a.boje) { Object.entries(a.boje).forEach(([k, v]) => { if (/^#[0-9a-f]{6}$/i.test(v)) P.model.colors[k] = v; }); aiLog.push('3D: boje ' + Object.keys(a.boje).join(', ')); }
+        touch(); if (V) { V.build(P.model); if (view === '3d') renderSide3d(); } return { ok: true, boje: P.model.colors }; } },
     { name: 'tekst_ugovora', description: 'Vrati trenutni tekst ugovora (HTML).', inputSchema: { type: 'object', properties: {} }, execute: () => ({ html: (P.contract?.html || contractHtml()).slice(0, 12000) }) },
     { name: 'zamijeni_ugovor', description: 'Zamijeni tekst ugovora novim HTML-om (samo kad korisnik traži izmjenu ugovora). Koristi <h2>, <h4>, <p>, <table>.', inputSchema: { type: 'object', properties: { html: { type: 'string' } }, required: ['html'] },
       execute: ({ html }) => { const clean = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/ on\w+="[^"]*"/gi, ''); P.contract = { html: clean, edited: true, at: Date.now() }; aiLog.push('✎ ugovor izmijenjen (AI) – pregledaj karticu Ugovor'); touch(); return { ok: true }; } },
@@ -1019,7 +1135,7 @@ function showView(v) {
   view = v; cancelDraw();
   $$('.tabs [data-view]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === v)));
   $$('.view').forEach((s) => s.classList.toggle('active', s.id === 'view-' + v));
-  if (v === 'nacrt') renderNacrt(); if (v === 'troskovnik') renderTroskovnik(); if (v === 'ugovor') renderUgovor();
+  if (v === 'nacrt') renderNacrt(); if (v === '3d') render3D(); if (v === 'troskovnik') renderTroskovnik(); if (v === 'ugovor') renderUgovor();
 }
 function setRole(r) {
   role = r; try { localStorage.setItem('gp.role', r); } catch {}

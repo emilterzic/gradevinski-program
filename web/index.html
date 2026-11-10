@@ -207,6 +207,33 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .mic.on { animation: none; } }
 .send { height: 40px; }
 
+
+/* 3D */
+#view-3d.active { display: grid; grid-template-columns: 300px 1fr; }
+.v3d-side { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.v3d-side h3 { font-size: 14px; }
+.v3d-main { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #dfe7ee; }
+.v3d-host { flex: 1; min-height: 0; position: relative; }
+.v3d-host canvas { position: absolute; inset: 0; }
+.v3d-load { position: absolute; inset: 0; display: grid; place-items: center; color: #4a5563; font-size: 14px; }
+.v3d-stages { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 6px; padding: 10px; background: var(--panel); border-top: 1px solid var(--line); }
+.v3d-stages button { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 6px 8px; text-align: left; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.v3d-stages button b { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v3d-stages button span { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.v3d-stages button.done { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.v3d-stages button[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.v3d-stages button[aria-current="true"] span { color: #e6eeff; }
+.v3d-info { position: absolute; left: 14px; top: 14px; width: min(380px, calc(100% - 28px)); max-height: 55%; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.v3d-info table { width: 100%; border-collapse: collapse; }
+.v3d-info td { padding: 3px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.v3d-info td.n { text-align: right; font-family: var(--f-mono); white-space: nowrap; }
+.viewgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.swatches { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.swatches label { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.swatches input[type=color] { width: 34px; height: 28px; border: 1px solid var(--line); border-radius: 6px; padding: 0; background: none; }
+.pg.v3d-card { background: linear-gradient(160deg, var(--accent-soft), var(--bg)); }
+@media (max-width: 1100px) { #view-3d.active { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .v3d-side { max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); } .v3d-stages { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+
 /* modal & toast */
 .modal-bg { position: fixed; inset: 0; background: rgba(10,15,25,.45); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
 .modal-bg.open { display: flex; }
@@ -250,6 +277,7 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 </header>
 <nav class="tabs" role="tablist">
   <button role="tab" id="tab-nacrt" aria-selected="true" data-view="nacrt">Nacrt</button>
+  <button role="tab" id="tab-3d" aria-selected="false" data-view="3d">3D prikaz</button>
   <button role="tab" id="tab-troskovnik" aria-selected="false" data-view="troskovnik">Troškovnik <span class="count" id="aiCount" hidden></span></button>
   <button role="tab" id="tab-ugovor" aria-selected="false" data-view="ugovor">Ugovor</button>
 </nav>
@@ -285,6 +313,14 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
       </div>
       <aside class="mpanel" id="mpanel"></aside>
     </section>
+    <section class="view" id="view-3d">
+      <aside class="v3d-side" id="v3dSide"></aside>
+      <div class="v3d-main">
+        <div class="v3d-host" id="v3dHost"><div class="v3d-load" id="v3dLoad">Pripremam 3D model…</div></div>
+        <div class="v3d-stages" id="v3dStages"></div>
+        <div class="v3d-info" id="v3dInfo" hidden></div>
+      </div>
+    </section>
     <section class="view" id="view-troskovnik"><div class="page-wrap" id="trosWrap"></div></section>
     <section class="view" id="view-ugovor"><div class="page-wrap" id="ugWrap"></div></section>
   </main>
@@ -306,6 +342,7 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 <div class="toast" id="toast" role="status"></div>
 <input type="file" id="pdfFile" accept="application/pdf" hidden>
 <input type="file" id="jsonFile" accept="application/json" hidden>
+<script type="importmap">{"imports":{"three":"./lib/three.module.min.js","three/addons/":"./lib/three-addons/"}}</script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

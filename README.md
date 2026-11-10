@@ -14,6 +14,9 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 - **Troškovnik**: 14 vrsta radova (pripremni → instalacije), faze gradnje, rekapitulacija, PDV 25 %,
   izvoz u Excel (.csv) i Word (.docx), izvoz/uvoz projekta (.json, prenosivost podataka).
 - **Ugovor**: ugovor o građenju generiran iz troškovnika (plaćanje po fazama, jamstva, rokovi), uređiv, izvoz .docx.
+- **3D prikaz**: model kuće iz nacrta (tlocrt, presjek, pročelja) u three.js; pogledi na sva pročelja, perspektiva i
+  odozgo; 6 faza gradnje (iskop → gotov objekt) s iznosima iz troškovnika; boje materijala i gotove palete;
+  klik na dio kuće prikazuje njegove stavke; slike do 3200 × 1800 (zadano 2560 × 1440) s natpisom.
 - **AI asistent**: chat s glasovnim unosom i brzim gumbima; alatima mijenja troškovnik (dodaj/promijeni/obriši stavke,
   cijene, faze, podatke ugovora). Svaka AI promjena je označena i može se poništiti.
 
