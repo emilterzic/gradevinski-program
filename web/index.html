@@ -214,7 +214,7 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 
 
 /* 3D */
-#view-3d.active { display: grid; grid-template-columns: 300px 1fr; }
+#view-3d.active { display: grid; grid-template-columns: 348px 1fr; }
 .v3d-side { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 .v3d-side h3 { font-size: 15px; }
 .v3d-main { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #dfe7ee; }
@@ -236,6 +236,44 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 .swatches { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .swatches label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .swatches input[type=color] { width: 34px; height: 28px; border: 1px solid var(--line); border-radius: 6px; padding: 0; background: none; }
+.sidetabs { display: grid; grid-template-columns: 1fr 1fr; flex: none; }
+.sidetabs button { padding: 7px 8px; font-size: 13.5px; }
+.ogrps { display: flex; flex-direction: column; gap: 6px; }
+.ogrp { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.ogrp summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 0 8px; padding: 8px 10px; align-items: baseline; border-radius: 10px; }
+.ogrp summary::-webkit-details-marker { display: none; }
+.ogrp summary:hover { background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+.ogrp .gn { grid-column: 1 / -1; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; }
+.ogrp .gn::after { content: "▾"; font-size: 12px; transition: transform .15s; }
+.ogrp[open] .gn::after { transform: rotate(180deg); }
+.ogrp .gv { font-weight: 600; font-family: var(--f-display); font-size: 14.5px; line-height: 1.3; }
+.ogrp .gc { font-family: var(--f-mono); font-size: 13px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ogrp[open] summary { border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; }
+.opts { display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+.opt { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 8px; text-align: left; display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; align-items: baseline; }
+.opt:hover { border-color: var(--accent); }
+.opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.opt .on { font-weight: 600; font-size: 13.5px; }
+.opt .on i { font-style: normal; font-size: 11px; font-weight: 500; color: var(--ok); background: var(--ok-soft); border-radius: 999px; padding: 0 6px; margin-left: 4px; white-space: nowrap; }
+.opt .pr { font-family: var(--f-mono); font-size: 12.5px; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.opt[aria-pressed="true"] .pr { color: var(--ink); font-weight: 500; }
+.opt .nt { grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.bsum { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; color: var(--muted); }
+.bsum b { font-family: var(--f-display); font-size: 20px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.stat.lvl-warn { border-color: var(--ai); }
+.stat.lvl-bad { border-color: var(--bad); }
+.stat.lvl-ok { border-color: color-mix(in srgb, var(--ok) 55%, var(--line)); }
+.chk { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; font-size: 13px; line-height: 1.4; }
+.chk li { display: grid; grid-template-columns: 20px 1fr; gap: 6px; align-items: start; }
+.chk .ic { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; margin-top: 1px; }
+.chk li.ok .ic { background: var(--ok-soft); color: var(--ok); }
+.chk li.warn .ic { background: var(--ai-soft); color: var(--ai); }
+.chk li.bad .ic { background: var(--bad); color: #fff; }
+.chk li.info .ic { background: var(--accent-soft); color: var(--accent); font-style: italic; font-family: Georgia, serif; }
+.chk li div span { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+td.pc { position: relative; }
+td.pc .dot-ai, td.pc .dot-kat { position: absolute; left: 3px; top: 16px; margin: 0; }
+.dot-kat { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 4px; vertical-align: middle; }
 .pg.v3d-card { background: linear-gradient(160deg, var(--accent-soft), var(--bg)); }
 @media (max-width: 1100px) { #view-3d.active { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .v3d-side { max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); } .v3d-stages { grid-template-columns: repeat(3, minmax(0,1fr)); } }
 
@@ -270,7 +308,7 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.4</small></div>
+  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.5</small></div>
   <button class="proj-btn" id="projBtn" aria-haspopup="true"><span id="projName">Projekt</span> ▾</button>
   <div class="seg" role="group" aria-label="Uloga">
     <button id="roleP" aria-pressed="true">Projektant</button>
