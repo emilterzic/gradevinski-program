@@ -1,4 +1,4 @@
-// Građevinski program – prototip v0.5
+// Građevinski program – prototip v0.6
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -94,8 +94,6 @@ function demoItems() {
     A('g01', 'Iskolčenje građevine od ovlaštenog geodeta', 'paušal', 1, 'Obvezno prije početka radova.'),
     A('g02', 'Strojni iskop humusa d=30 cm s odlaganjem na gradilištu', 'm²', 96.75, 'Tlocrt 8,75 × 7,00 m (str. 1) + 1 m radnog prostora sa svake strane: 10,75 × 9,00 m = 96,75 m².', 'iskop', MD.PRICE.humus),
     A('g02', 'Nasip i nabijanje šljunka ispod podne ploče d=20 cm', 'm³', 11.55, 'Sloj P1 (str. 6): nabijeni šljunak 20 cm × GBP prizemlja 57,74 m².', 'temelji', MD.PRICE.sljunak),
-    A('g03', 'Betoniranje AB stropne ploče nad prizemljem d=18 cm', 'm³', 10.39, 'Sloj MK: AB ploča 18 cm × 57,74 m².', null, MD.PRICE.stropna),
-    A('g03', 'Betoniranje AB stropne ploče nad katom d=20 cm', 'm³', 11.55, 'Sloj M1: AB ploča 20 cm × 57,74 m².', null, MD.PRICE.stropna),
     A('g03', 'Armatura B500B, dobava, savijanje i postava', 'kg', 0, '', null, MD.PRICE.armatura, { slot: 'arm', key: 'armatura' }),
     A('g04', 'Zidanje pregradnih zidova blok opekom d=10–15 cm', 'm²', 130.0, 'Procjena ≈ 25 m pregradnih zidova po etaži × 2,60 m; provjeriti mjerenjem na tlocrtima.'),
     A('g04', 'Unutarnja vapneno-cementna žbuka zidova', 'm²', 419.0, 'Unutarnja strana vanjskih zidova 159 m² + obje strane pregradnih 2 × 130 m².', 'zavrsni'),
@@ -136,7 +134,7 @@ function newProject(name, demo) {
     pageScale: {}, // page -> {mPerPt, src}
     phases: PHASES.map((p) => ({ ...p })),
     items: demo ? demoItems() : [],
-    build: { ...MD.DEFAULT_BUILD }, buildLinked: !!demo, model: demo ? MD.demoModel() : null,
+    build: { ...MD.DEFAULT_BUILD }, buildLinked: !!demo, model: demo ? MD.demoModel() : null, modelType: demo ? 'nacrt' : 'kuca', mig: 6,
     meas: [],
     contract: null,
     chat: demo ? [{ role: 'assistant', content: 'Pozdrav! Pročitao sam primjer nacrta (tlocrti 1:100, presjek sa slojevima, neto površine) i predložio stavke s količinama i okvirnim cijenama. Svaka ima obrazloženje izračuna. Žute su AI prijedlozi: potvrdi ih, ispravi ručno ili izmjeri na nacrtu.\n\nU kartici 3D prikaz → Izvedba biraš temelje, konstrukciju (opeka ili armirani beton), oblik krova, fasadu i stolariju: 3D model i troškovnik se odmah usklade.\n\nMožeš mi pisati ili govoriti, npr. „dodaj stavku ograde balkona 7 m” ili „povećaj fasadu na 180 m²”.' }] : [],
@@ -225,6 +223,12 @@ function migrate(p) {
       if (win >= 0) p.items.splice(win, 1, ...gen.filter((x) => x.slot === 'stolarija').map(slotToItem));
     }
     p.chat.push({ role: 'assistant', content: 'Novo u v0.5: u kartici 3D prikaz → Izvedba i cijene biraš vrstu tla, temelje, konstrukciju (opeka sa serklažima ili armirani beton), oblik krova, pokrov, fasadu i stolariju. 3D model i stavke troškovnika odmah se usklade, s okvirnim tržišnim cijenama koje čekaju tvoju potvrdu. Ispod je informativna provjera statike.' });
+  }
+  if ((p.mig || 0) < 6) {
+    // v0.6: vrsta objekta i dimenzije; stropne ploče postaju stavka izvedbe (prate tlocrt i broj etaža)
+    p.mig = 6;
+    p.modelType ||= p.model?.src === 'auto' || !p.pdf?.demo ? 'kuca' : 'nacrt';
+    if (p.buildLinked && !p.items.some((i) => i.slot === 'ploce')) p.items.filter((i) => !i.slot && /stropn\S* ploč/i.test(i.desc)).forEach((it, k) => { it.slot = 'ploce'; it.key = k ? 'stropna' + k : 'stropna'; it.opt = 'ab20'; });
   }
   p.build = MD.normBuild(p.build);
   if (p.model) MD.applyBuild(p.model, p.build);
@@ -918,10 +922,10 @@ function renderUgovor() {
 
 /* ---------- IZVEDBA (opcije) ↔ 3D model ↔ troškovnik ---------- */
 function ensureModel() { if (!P.model) P.model = P.pdf?.demo ? MD.demoModel() : MD.autoModel(P.modelDims || {}); P.build = MD.normBuild(P.build); MD.applyBuild(P.model, P.build); return P.model; }
-function snapshot() { return JSON.stringify({ items: P.items, phases: P.phases, meta: P.meta, contract: P.contract, build: P.build, buildLinked: P.buildLinked, model: P.model }); }
+function snapshot() { return JSON.stringify({ items: P.items, phases: P.phases, meta: P.meta, contract: P.contract, build: P.build, buildLinked: P.buildLinked, model: P.model, modelType: P.modelType, modelDims: P.modelDims || null }); }
 function restore(str) {
   const o = JSON.parse(str); P.items = o.items; P.phases = o.phases; P.meta = o.meta; P.contract = o.contract;
-  if (o.build) { P.build = o.build; P.buildLinked = o.buildLinked; if (o.model) P.model = o.model; }
+  if (o.build) { P.build = o.build; P.buildLinked = o.buildLinked; if (o.model) P.model = o.model; if (o.modelType) { P.modelType = o.modelType; P.modelDims = o.modelDims || undefined; } }
 }
 function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 15) undoStack.shift(); }
 // Zamijeni stavke troškovnika koje ovise o izvedbi. Ručno upisane ili izmjerene količine ostaju; cijena ostaje ako se opcija nije promijenila.
@@ -952,11 +956,11 @@ function applySlots(slots) {
   return n;
 }
 // promjena jedne ili više odluka o izvedbi; vraća broj zamijenjenih stavki
-function setBuild(patch) {
+function setBuild(patch, quiet) {
   ensureModel();
   const prev = P.build, sz = patch.seizmika !== undefined ? patch.seizmika : prev.seizmika, nb = MD.normBuild({ ...prev, ...patch, seizmika: sz });
   if (JSON.stringify(nb) === JSON.stringify(prev)) return 0;
-  pushUndo();
+  if (!quiet) pushUndo();
   const C = P.model.colors, eq = (a, c) => (a || '').toLowerCase() === (c || '').toLowerCase();
   // boja prati materijal (crijep/lim, PVC/drvo) ako korisnik nije odabrao svoju
   [['pokrov', 'krov'], ['stolarija', 'stolarija']].forEach(([k, ck]) => { const o0 = MD.optOf(k, prev[k]), o1 = MD.optOf(k, nb[k]); if (o0.id !== o1.id && o1.boja && (eq(C[ck], o0.boja) || eq(C[ck], MD.DEFAULT_COLORS[ck]))) C[ck] = o1.boja; });
@@ -964,8 +968,42 @@ function setBuild(patch) {
   const keys = MD.BUILD_KEYS.filter((k) => prev[k] !== nb[k]);
   const n = applySlots([...new Set(keys.flatMap((k) => MD.SLOTS_OF[k]))]);
   touch();
-  if (V && view === '3d' && keys.length) V.build(P.model, P.build);
+  if (V && view === '3d' && keys.length && !quiet) V.build(P.model, P.build);
   return n;
+}
+// vrsta objekta i dimenzije: novi model (iz nacrta rastegnut ili okvirni), uobičajena izvedba za vrstu, preračun stavki izvedbe
+const typeOf = () => MD.TYPES.find((t) => t.id === P.modelType) || MD.TYPES[2];
+function curDims() { ensureModel(); return { ...MD.modelDims(P.model), ...(P.modelType === 'nacrt' ? {} : MD.clampDims(P.modelDims || {})) }; }
+function setObjekt(type, dims) {
+  ensureModel(); pushUndo();
+  const T = type ? MD.TYPES.find((t) => t.id === type) : null;
+  if (T) P.modelType = T.id;
+  const base = P.modelType === 'nacrt' ? MD.demoModel() : null;
+  P.modelDims = MD.clampDims(T ? (T.d || MD.modelDims(base)) : { ...curDims(), ...dims });
+  const nm = base ? MD.resizeModel(base, P.modelDims) : MD.autoModel(P.modelDims);
+  nm.colors = P.model.colors; P.model = nm; MD.applyBuild(P.model, P.build);
+  if (T?.build) setBuild(T.build, true);
+  const n = P.buildLinked ? applySlots(MD.ALL_SLOTS) : 0;
+  touch();
+  return n;
+}
+function objektHtml() {
+  const d = curDims(), T = typeOf(), Q = MD.quantities(P.model), G = MD.roofGeom(P.model);
+  const F = [['W', 'Širina (m)'], ['D', 'Dubina (m)'], ['floors', 'Broj etaža'], ['storeyH', 'Visina etaže (m)'], ['pitch', 'Nagib krova (°)'], ['ov', 'Prepust krova (m)']];
+  return `<details class="ogrp" data-g="objekt" ${openGrp.has('objekt') ? 'open' : ''}><summary><span class="gn">Objekt i dimenzije</span><span class="gv">${esc(T.n)}${P.model.resized ? ' (izmijenjeno)' : ''}</span><span class="gc">${fq(d.W)} × ${fq(d.D)} m · ${MD.etaze(d.floors)}</span></summary>
+    <div class="opts">${MD.TYPES.filter((t) => !t.demo || P.pdf?.demo).map((t) => `<button class="opt" data-ty="${t.id}" aria-pressed="${t.id === T.id}"><span class="on">${esc(t.n)}</span><span class="pr">${t.d ? MD.etaze(t.d.floors) : ''}</span><span class="nt">${t.d ? `${fq(t.d.W)} × ${fq(t.d.D)} m, etaža ${fq(t.d.storeyH)} m` : esc(t.note)}</span></button>`).join('')}
+      <div class="dims">${F.map(([k, l]) => `<label for="dm_${k}">${l}<input id="dm_${k}" data-dm="${k}" inputmode="decimal" value="${fq(d[k])}" title="${MD.DIM_LIM[k].join(' – ')}"></label>`).join('')}</div>
+      <p class="note">Visina do strehe ${fq(r2(P.model.eave))} m, ukupno ${fq(r2(G.top))} m. Tlocrt ${fq(r2(Q.A))} m², sve etaže ${fq(r2(Q.A * d.floors))} m².${P.modelType === 'nacrt' ? ' Model iz nacrta se rasteže: prozori i vrata zadržavaju veličinu, etaže se dodaju ponavljanjem kata.' : ''}</p>
+      <button class="btn primary" id="dmApply">Primijeni dimenzije</button>
+      ${P.buildLinked ? '<button class="btn small ai" id="dmAi" title="Podovi, žbuke, izolacije i instalacije ne ovise o izvedbi, pa ih dimenzije ne mijenjaju same">AI: uskladi ostale stavke s dimenzijama</button>' : ''}</div></details>`;
+}
+function bindObjekt(side) {
+  const after = (n, msg) => { render3D(); renderCounts(); toast(msg + (n ? ` Preračunato ${n} stavki izvedbe.` : '')); };
+  $$('[data-ty]', side).forEach((b) => b.onclick = () => { openGrp.add('objekt'); const n = setObjekt(b.dataset.ty), T = typeOf(); after(n, `${T.n}: standardne dimenzije${T.build ? ' i uobičajena izvedba' : ''}.`); });
+  const apply = () => { const d = {}; $$('[data-dm]', side).forEach((i) => { const v = parseNum(i.value); if (v != null) d[i.dataset.dm] = v; }); const n = setObjekt(null, d), c = curDims(); after(n, `Dimenzije: ${fq(c.W)} × ${fq(c.D)} m, ${MD.etaze(c.floors)}, etaža ${fq(c.storeyH)} m.`); };
+  $('#dmApply', side).onclick = apply;
+  $$('[data-dm]', side).forEach((i) => i.onkeydown = (e) => { if (e.key === 'Enter') apply(); });
+  const ai = $('#dmAi', side); if (ai) ai.onclick = () => { const c = curDims(), Q = MD.quantities(P.model); sendChat(`Dimenzije objekta su sada ${fq(c.W)} × ${fq(c.D)} m, ${c.floors} etaža (${MD.etaze(c.floors)}), visina etaže ${fq(c.storeyH)} m, tlocrt ${fq(r2(Q.A))} m², sve etaže ${fq(r2(Q.A * c.floors))} m². Stavke izvedbe (polje izvedba = true) su već preračunate, njih ne diraj. Pregledaj OSTALE stavke koje ovise o veličini objekta (podovi, estrih, žbuke, bojanje, izolacije, pregradni zidovi, podno grijanje, humus, nasip) i uskladi im količine s novim dimenzijama alatom promijeni_stavku, uz obrazloženje izračuna. Ne mijenjaj stavke sa statusom rucno, mjereno ili ok. Na kraju kratko reci što si promijenio.`, { complex: true }); };
 }
 function buildCost() { return P.items.filter((i) => i.slot).reduce((s, i) => s + (i.qty || 0) * (i.price || 0), 0); }
 const bkey = (b) => MD.BUILD_KEYS.map((k) => b[k]).join('|');
@@ -1039,7 +1077,7 @@ function izvedbaHtml() {
   <div class="box"><div style="display:flex;align-items:baseline;gap:8px"><h3>Izvedba</h3><span class="spacer"></span><button class="btn small" id="bUndo" ${undoStack.length ? '' : 'disabled'} title="Vrati zadnju promjenu izvedbe ili AI promjenu">↶ Vrati</button></div>
     ${P.buildLinked ? `<div class="bsum"><span>Stavke izvedbe u troškovniku</span><b>${eur0(buildCost())}</b></div><p class="note">Odaberi opciju: 3D model i stavke troškovnika odmah se zamijene. Cijene su okvirne tržišne (bez PDV-a) i čekaju tvoju potvrdu. Ručno upisane količine ostaju.</p>`
       : `<p class="note">Troškovnik još nema stavke izvedbe (iskop, temelji, zidovi, krov, fasada, stolarija). Mogu ih izračunati iz 3D modela.</p><button class="btn primary" id="bLink">Dodaj stavke izvedbe u troškovnik</button>`}</div>
-  <div class="ogrps">${['tlo', 'temelji', 'konstrukcija', 'krovOblik', 'pokrov', 'fasada', 'stolarija', 'staklo', 'klizna'].map(grp).join('')}</div>
+  <div class="ogrps">${objektHtml()}${['tlo', 'temelji', 'konstrukcija', 'krovOblik', 'pokrov', 'fasada', 'stolarija', 'staklo', 'klizna'].map(grp).join('')}</div>
   ${m.roof?.note ? `<div class="warnbar">${esc(m.roof.note)}</div>` : ''}
   <div class="box stat lvl-${st.level}"><h3>Statika: ${st.level === 'ok' ? 'osnovna pravila zadovoljena' : nW + (nW === 1 ? ' upozorenje' : ' upozorenja')}</h3>
     <label class="note" for="szSel">Potresno područje: a_g·S (karta potresnih područja RH, povratno razdoblje 475 g.)</label>
@@ -1048,7 +1086,7 @@ function izvedbaHtml() {
     <p class="note">Informativna provjera prema osnovnim pravilima normi HRN EN 1996-1-1 (ziđe), HRN EN 1992-1-1 (beton) i HRN EN 1998-1 (potres). Ne zamjenjuje statički proračun: konstrukciju mora dokazati i ovjeriti ovlašteni inženjer građevinarstva.</p></div>`;
 }
 function prikazHtml() {
-  const m = P.model, C = m.colors, auto = m.src === 'auto', d = P.modelDims || {};
+  const m = P.model, C = m.colors;
   return `
   <div><h3>Pogled</h3><div class="viewgrid" style="margin-top:6px">${v3dViews().map(([k, l]) => `<button class="btn small" data-vw="${k}">${esc(l)}</button>`).join('')}</div>
     <p class="note" style="margin-top:6px">Mišem okreći model, kotačićem približi. Klikni dio kuće (krov, fasadu, prozor) i vidjet ćeš njegove stavke iz troškovnika.</p></div>
@@ -1059,17 +1097,12 @@ function prikazHtml() {
     <button class="btn" id="v3dAll" title="Sprema sva pročelja i perspektivu, sliku po sliku">Spremi sve poglede</button></div>
   <div><h3>Boje</h3><div class="viewgrid" style="margin:6px 0 8px">${MD.COLOR_PRESETS.map((p, i) => `<button class="btn small" data-pre="${i}" title="${esc(p.n)}">${esc(p.n.split(' (')[0])}</button>`).join('')}</div>
     <div class="swatches">${COLOR_LBL.map(([k, l]) => `<label for="c_${k}"><input type="color" id="c_${k}" data-col="${k}" value="${esc(C[k] || MD.DEFAULT_COLORS[k])}">${l}</label>`).join('')}</div></div>
-  <div class="box"><h3>Model</h3>
-    ${auto ? `<p class="note">Okvirni model iz dimenzija. Prozori su raspoređeni okvirno.</p>
-      <div class="swatches">${[['W', 'Širina (m)', 10], ['D', 'Dubina (m)', 8], ['floors', 'Etaže', 2], ['storeyH', 'Visina etaže (m)', 2.9], ['pitch', 'Nagib krova (°)', 30], ['ov', 'Prepust (m)', 0.6]].map(([k, l, dv]) => `<label for="md_${k}" style="flex-direction:column;align-items:flex-start;gap:2px">${l}<input class="btn" style="width:100%" id="md_${k}" data-md="${k}" inputmode="decimal" value="${fq(d[k] ?? dv)}"></label>`).join('')}</div>
-      <button class="btn" id="v3dApply">Primijeni dimenzije</button>`
-    : `<p class="note">Model je složen iz nacrta: tlocrti, presjek 1-1 i pročelja (1:100). Tlocrt ${fq(bboxW(m))} × ${fq(bboxD(m))} m, streha +${fq(m.eave)}, ${m.openings.length} otvora, balkon i nadstrešnica.</p>`}
-    <button class="btn small" id="v3dSwitch">${auto && P.pdf?.demo ? 'Vrati model iz nacrta' : 'Okvirni model iz dimenzija'}</button></div>`;
+  <p class="note">Vrstu objekta i dimenzije mijenjaš u kartici Izvedba i cijene → Objekt i dimenzije.</p>`;
 }
 // novi model (dimenzije) → primijeni izvedbu i, ako je troškovnik povezan, preračunaj stavke izvedbe
 function swapModel(nm) { const cols = P.model.colors; P.model = nm; P.model.colors = cols; MD.applyBuild(P.model, P.build); if (P.buildLinked) applySlots(MD.ALL_SLOTS); touch(false); }
 function renderSide3d() {
-  const side = $('#v3dSide'), keep = side.scrollTop, auto = P.model.src === 'auto';
+  const side = $('#v3dSide'), keep = side.scrollTop;
   side.innerHTML = `<div class="seg sidetabs" role="tablist"><button role="tab" data-tab="izvedba" aria-pressed="${sideTab === 'izvedba'}">Izvedba i cijene</button><button role="tab" data-tab="prikaz" aria-pressed="${sideTab === 'prikaz'}">Prikaz i slike</button></div>` + (sideTab === 'izvedba' ? izvedbaHtml() : prikazHtml());
   side.scrollTop = keep;
   $$('[data-tab]', side).forEach((b) => b.onclick = () => { sideTab = b.dataset.tab; renderSide3d(); side.scrollTop = 0; });
@@ -1080,6 +1113,7 @@ function renderSide3d() {
       renderSide3d(); renderStages3d(); renderCounts();
       if (n) toast(`${o.n}: zamijenjeno ${n} ${n === 1 ? 'stavka' : 'stavki'} u troškovniku.`);
     });
+    bindObjekt(side);
     $('#szSel').onchange = (e) => { setBuild({ seizmika: e.target.value || null }); renderSide3d(); };
     $('#bUndo').onclick = () => undoLast();
     const bl = $('#bLink'); if (bl) bl.onclick = () => { pushUndo(); P.buildLinked = true; if (!P.items.some((i) => i.slot === 'arm')) P.items.push({ id: uid(), group: 'g03', desc: 'Armatura B500B, dobava, savijanje i postava', unit: 'kg', qty: 0, price: MD.PRICE.armatura, priceSrc: 'kat', phase: 'konstrukcija', status: 'ai', qtyMode: 'manual', basis: '', slot: 'arm', key: 'armatura' }); const n = applySlots(MD.ALL_SLOTS); touch(); renderSide3d(); renderStages3d(); toast(`Dodano ${n} stavki izvedbe kao AI prijedlozi.`); };
@@ -1090,8 +1124,6 @@ function renderSide3d() {
   $$('[data-col]').forEach((inp) => inp.oninput = () => { clearTimeout(inp._t); inp._t = setTimeout(() => { V.setColors({ [inp.dataset.col]: inp.value }); touch(false); }, 30); });
   $('#v3dShot').onclick = () => shot3d(null);
   $('#v3dAll').onclick = () => shotAll3d();
-  const ap = $('#v3dApply'); if (ap) ap.onclick = () => { const nd = {}; $$('[data-md]').forEach((i) => { const v = parseNum(i.value); if (v) nd[i.dataset.md] = v; }); P.modelDims = nd; swapModel(MD.autoModel(nd)); render3D(); };
-  $('#v3dSwitch').onclick = () => { swapModel((auto && P.pdf?.demo) ? MD.demoModel() : MD.autoModel(P.modelDims || {})); render3D(); };
 }
 function undoLast() {
   const s0 = undoStack.pop(); if (!s0) return;
@@ -1160,7 +1192,7 @@ function renderChat() {
 }
 function itemsForAi() {
   const rb = rbMap();
-  return P.items.map((i) => ({ id: i.id, rb: rb[i.id], grupa: groupOf(i.group).n, opis: i.desc, jed: i.unit, kolicina: i.qty, cijena: i.price, faza: i.phase, status: i.status }));
+  return P.items.map((i) => ({ id: i.id, rb: rb[i.id], grupa: groupOf(i.group).n, opis: i.desc, jed: i.unit, kolicina: i.qty, cijena: i.price, faza: i.phase, status: i.status, izvedba: !!i.slot }));
 }
 function systemPrompt() {
   const t = totals();
@@ -1170,6 +1202,7 @@ Pravila: količine računaj iz podataka s nacrta (kote, površine, sastavi sloje
 Vrste radova (grupa): ${GROUPS.map((g) => g.id + ' = ' + g.n).join('; ')}.
 Faze: ${P.phases.map((p) => p.id + ' = ' + p.n).join('; ')}.
 Projekt: "${P.name}". Građevina: ${P.meta.gradjevina || 'nije upisano'}. Lokacija: ${P.meta.lokacija || 'nije upisano'}.
+Objekt (alat model_3d mijenja vrstu i dimenzije): ${P.model ? typeOf().n + ', ' + Object.entries(MD.modelDims(P.model)).map(([k, v]) => k + '=' + v).join(', ') : 'model još nije otvoren'}.
 Izvedba (alat odaberi_izvedbu mijenja 3D model i pripadne stavke s okvirnim cijenama): ${MD.BUILD_KEYS.map((k) => k + '=' + P.build[k]).join(', ')}, seizmika=${P.build.seizmika || 'nije odabrano'}. Provjera statike u programu je informativna: uvijek napomeni da konstrukciju dokazuje ovlašteni statičar; šuplja opeka s vodoravnim šupljinama nije nosiva u potresnom području.
 Trenutno: ${P.items.length} stavki, ${t.ai} čeka potvrdu, ukupno bez PDV-a ${eur(t.sum)}. Otvorena kartica: ${view}${pdfDoc ? `, nacrt stranica ${curPage}/${pdfDoc.numPages} "${pageInfo[curPage]?.title}"` : ', nema nacrta'}.`;
 }
@@ -1193,11 +1226,12 @@ function aiTools() {
     { name: 'popis_nacrta', description: 'Popis stranica nacrta s nazivom i mjerilom.', inputSchema: { type: 'object', properties: {} }, execute: () => pdfDoc ? Object.entries(pageInfo).map(([k, v]) => ({ stranica: Number(k), naziv: v.title, mjerilo: v.ratio ? '1:' + v.ratio : null })) : [] },
     { name: 'podaci_projekta', description: 'Upiši podatke projekta za ugovor (investitor, izvođač, OIB, adrese, lokacija, građevina, rok u danima, jamstva).', inputSchema: { type: 'object', properties: { investitor: { type: 'string' }, investitorOib: { type: 'string' }, investitorAdr: { type: 'string' }, izvodjac: { type: 'string' }, izvodjacOib: { type: 'string' }, izvodjacAdr: { type: 'string' }, gradjevina: { type: 'string' }, lokacija: { type: 'string' }, nadzor: { type: 'string' }, trajanjeDana: { type: 'number' } } },
       execute: (a) => { Object.entries(a || {}).forEach(([k, v]) => { if (k in P.meta) P.meta[k] = v; }); if (P.contract && !P.contract.edited) P.contract.html = contractHtml(); aiLog.push('✎ podaci projekta: ' + Object.keys(a || {}).join(', ')); touch(); return { ok: true }; } },
-    { name: 'model_3d', description: 'Promijeni 3D prikaz objekta: boje (hex, npr. #d9d8d4) za fasada, cokl, krov, stolarija, limarija, teren; ili okvirne dimenzije (sirina, dubina, etaze, visinaEtaze, nagib) za okvirni model.', inputSchema: { type: 'object', properties: { boje: { type: 'object', properties: { fasada: { type: 'string' }, cokl: { type: 'string' }, krov: { type: 'string' }, stolarija: { type: 'string' }, limarija: { type: 'string' }, teren: { type: 'string' } } }, dimenzije: { type: 'object', properties: { sirina: { type: 'number' }, dubina: { type: 'number' }, etaze: { type: 'number' }, visinaEtaze: { type: 'number' }, nagib: { type: 'number' } } } } },
+    { name: 'model_3d', description: 'Promijeni 3D prikaz objekta: boje (hex, npr. #d9d8d4) za fasada, cokl, krov, stolarija, limarija, teren; ili vrsta objekta (tip: ' + MD.TYPES.map((t) => t.id + ' = ' + t.n).join(', ') + ') i dimenzije (sirina, dubina, etaze, visinaEtaze, nagib, prepust). Dimenzije vrijede i za model iz nacrta; stavke izvedbe u troškovniku se preračunaju.', inputSchema: { type: 'object', properties: { tip: { type: 'string' }, boje: { type: 'object', properties: { fasada: { type: 'string' }, cokl: { type: 'string' }, krov: { type: 'string' }, stolarija: { type: 'string' }, limarija: { type: 'string' }, teren: { type: 'string' } } }, dimenzije: { type: 'object', properties: { sirina: { type: 'number' }, dubina: { type: 'number' }, etaze: { type: 'number' }, visinaEtaze: { type: 'number' }, nagib: { type: 'number' }, prepust: { type: 'number' } } } } },
       execute: async (a = {}) => { ensureModel();
-        if (a.dimenzije) { const d = a.dimenzije; P.modelDims = { W: d.sirina, D: d.dubina, floors: d.etaze, storeyH: d.visinaEtaze, pitch: d.nagib }; Object.keys(P.modelDims).forEach((k) => P.modelDims[k] == null && delete P.modelDims[k]); swapModel(MD.autoModel(P.modelDims)); aiLog.push('3D: okvirni model ' + JSON.stringify(P.modelDims)); }
+        if (a.tip && MD.TYPES.some((t) => t.id === a.tip && (!t.demo || P.pdf?.demo))) { setObjekt(a.tip); undoStack.pop(); aiLog.push('3D: vrsta objekta ' + typeOf().n); }
+        if (a.dimenzije) { const d = a.dimenzije, nd = { W: d.sirina, D: d.dubina, floors: d.etaze, storeyH: d.visinaEtaze, pitch: d.nagib, ov: d.prepust }; Object.keys(nd).forEach((k) => nd[k] == null && delete nd[k]); const n = setObjekt(null, nd); undoStack.pop(); aiLog.push('3D: dimenzije ' + JSON.stringify(curDims()) + (n ? ` (${n} stavki izvedbe preračunato)` : '')); }
         if (a.boje) { Object.entries(a.boje).forEach(([k, v]) => { if (/^#[0-9a-f]{6}$/i.test(v)) P.model.colors[k] = v; }); aiLog.push('3D: boje ' + Object.keys(a.boje).join(', ')); }
-        touch(); if (V) { if (V.model !== P.model) V.build(P.model, P.build); else V.setColors({}); if (view === '3d') renderSide3d(); } return { ok: true, boje: P.model.colors }; } },
+        touch(); if (V) { if (V.model !== P.model) V.build(P.model, P.build); else V.setColors({}); if (view === '3d') renderSide3d(); } return { ok: true, tip: P.modelType, dimenzije: curDims(), boje: P.model.colors }; } },
     { name: 'odaberi_izvedbu', description: 'Izvedba objekta: temelji, konstrukcija, krov, fasada, stolarija. Pošalji samo polja koja mijenjaš; bez polja vraća trenutno stanje. Mijenja 3D model i pripadne stavke troškovnika (okvirne cijene, AI prijedlog). Vrijednosti: ' + [...MD.BUILD_KEYS, 'seizmika'].map((k) => k + ': ' + MD.OPT[k].opts.map((o) => o.id + ' (' + o.n + ')').join(' | ')).join('; ') + '. Vraća odabir, okvirni trošak stavki izvedbe i informativnu provjeru statike.', inputSchema: { type: 'object', properties: Object.fromEntries([...MD.BUILD_KEYS, 'seizmika'].map((k) => [k, { type: 'string' }])) },
       execute: (a = {}) => { ensureModel(); const patch = {}; [...MD.BUILD_KEYS, 'seizmika'].forEach((k) => { if (a[k] != null && MD.OPT[k].opts.some((o) => o.id === a[k])) patch[k] = a[k]; });
         const before = undoStack.length, n = Object.keys(patch).length ? setBuild(patch) : 0; if (undoStack.length > before) undoStack.pop(); // poništavanje ide preko AI koraka

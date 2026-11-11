@@ -27,3 +27,6 @@
 - Statika je uvijek informativna: nikad ne tvrditi da je konstrukcija dokazana; šuplja opeka (vodoravne šupljine) samo kao ispuna.
   Uz svaku novu opciju konstrukcije dodati provjere u `statika()` i napomenu o ovlaštenom inženjeru.
 - Novi oblik krova: dodati granu u `roofGeom()` (plohe + H + wallTop); 3D i količine ga tada preuzimaju sami.
+- Objekt (v0.6): `P.modelType` (id iz `MD.TYPES`) + `P.modelDims` {W, D, floors, storeyH, pitch, ov}; mijenja se samo preko
+  `setObjekt(type, dims)`. Model iz nacrta se uvijek izvodi iz izvornog `demoModel()` preko `resizeModel()` (ne kumulativno);
+  ostale vrste preko `autoModel()`. Granice su u `DIM_LIM`. Dimenzije u `TYPES` su polazne vrijednosti, ne propis.

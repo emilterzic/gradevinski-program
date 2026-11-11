@@ -322,7 +322,7 @@ export class Viz3D {
   // sunce dolazi s lijeve strane promatrača pod ~45°, da svako pročelje dobije lijepo, plastično svjetlo
   placeSun(camPos, target) {
     const v = new THREE.Vector3().subVectors(camPos, target).setY(0).normalize();
-    const az = Math.atan2(v.z, v.x) + 1.15, el = 0.58, d = 60;
+    const az = Math.atan2(v.z, v.x) + 1.15, el = 0.58, d = this.sunD || 60;
     const dir = new THREE.Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el));
     this.sunLight.position.copy(target).addScaledVector(dir, d); this.sunLight.target.position.copy(target);
     this.fill.position.copy(target).addScaledVector(new THREE.Vector3(-dir.x, 0.5, -dir.z), d); this.fill.target.position.copy(target);
@@ -415,6 +415,11 @@ export class Viz3D {
     this.root.clear(); this.parts = [];
     const m = model, B = this.B, G = this.G = roofGeom(m), M = this.M = this.mats(m), E = edges(m), b = bbox(m), [cx, cz] = centroid(m);
     this.ops = openingsIn(m, G);
+    // veći objekt (stambena zgrada): šire područje sjena, dalja kamera i sunce
+    const big = Math.max(b.x1 - b.x0, b.z1 - b.z0, G.top), R = Math.max(20, big * 1.25 + 6), sc = this.sunLight.shadow.camera;
+    this.scaleK = Math.max(1, big / 10); this.sunD = Math.max(60, R * 2.4);
+    sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R; sc.far = this.sunD * 2; sc.updateProjectionMatrix();
+    this.controls.maxDistance = Math.max(90, big * 7);
     this.oldMats = Object.values(M).flat();
     seed = 99;
     // teren
@@ -495,11 +500,11 @@ export class Viz3D {
     const corners = m.fp; corners.forEach((v, i) => { const [nx, nz] = outward(m, E[i]), [px, pz] = outward(m, E[(i - 1 + E.length) % E.length]); bush(v[0] + (nx + px) * 1.9, v[1] + (nz + pz) * 1.9, 0.55 + rand() * 0.25, i); });
     // živica uz rub parcele (iza kuće)
     const hedge = (x0, z0, x1, z1) => { const L = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(L / 0.9); for (let i = 0; i <= n; i++) { const t = i / n; const mm = new THREE.Mesh(this.blob(0.62, 2, 0.22), M.leaf[i % 3]); mm.position.set(x0 + (x1 - x0) * t, 0.75, z0 + (z1 - z0) * t); mm.scale.set(1, 1.3, 1); green.add(mm); } };
-    hedge(b.x0 - 10, b.z0 - 15, b.x1 + 10, b.z0 - 15);
+    hedge(b.x0 - 10, b.z0 - 15 * this.scaleK, b.x1 + 10, b.z0 - 15 * this.scaleK);
     this.add(mergeMeshes(green), 'okolis', 5, 9);
     // stabla izvan osi pogleda na pročelja i perspektive
     [[-40, 15, 1.25, 0], [40, 16, 1.4, 1], [-140, 16, 1.15, 0], [158, 18, 1.2, 1], [-65, 30, 1.6, 2], [18, 33, 1.7, 0], [106, 32, 1.45, 2], [-112, 29, 1.5, 1], [-160, 34, 1.6, 2], [70, 42, 1.8, 0], [-25, 45, 1.6, 1]]
-      .forEach(([a, R, s, k]) => (k === 2 ? this.conifer : this.tree).call(this, cx + R * Math.cos(a * Math.PI / 180), cz + R * Math.sin(a * Math.PI / 180), s));
+      .forEach(([a, R, s, k]) => (k === 2 ? this.conifer : this.tree).call(this, cx + R * this.scaleK * Math.cos(a * Math.PI / 180), cz + R * this.scaleK * Math.sin(a * Math.PI / 180), s));
   }
   // nepravilna kugla krošnje (šum na verteksima), s glatkim normalama
   blob(r, detail = 3, amp = 0.25) {

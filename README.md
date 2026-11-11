@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: prototip v0.5 (studeni 2026.)
+## Stanje: prototip v0.6 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -24,6 +24,10 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   fasada (ETICS EPS/vuna, ventilirana, kamen, klinker, drvo), stolarija (PVC, ALU, drvo, drvo-ALU; dvostruko/trostruko
   staklo; HS/PSK klizne stijene). Odabir odmah mijenja 3D model i zamjenjuje pripadne stavke troškovnika
   (količine iz modela, cijena označena kao okvirna dok je korisnik ne potvrdi; ručne količine ostaju).
+- **Objekt i dimenzije** (v0.6): vrsta objekta (po nacrtu, prizemnica, obiteljska kuća P+1, manja stambena zgrada P+2,
+  stambena zgrada P+4) sa standardnim polaznim dimenzijama i uobičajenom izvedbom; širina, dubina, broj etaža, visina
+  etaže, nagib i prepust krova mijenjaju se slobodno, i na modelu iz nacrta (tlocrt se rasteže, etaže se dodaju).
+  Stavke izvedbe (uključujući AB stropne ploče) se preračunaju; ostale stavke može uskladiti AI asistent.
 - **Statika (informativno)**: pravila za omeđeno ziđe (debljina ≥ 24 cm, vitkost ≤ 15, serklaži u uglovima, uz otvore
   > 1,5 m² i na ≤ 5 m, horizontalni na ≤ 4 m, udio zidova po smjeru prema potresnom području) i osnovne provjere za AB.
   Ne zamjenjuje statički proračun ovlaštenog inženjera.

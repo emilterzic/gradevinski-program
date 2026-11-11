@@ -35,21 +35,74 @@ export function demoModel() {
     labels: ['Pročelje sjeveroistok', 'Pročelje jugoistok', 'Pročelje jugozapad', 'Pročelje jugozapad', 'Pročelje sjeverozapad'],
   };
 }
-// okvirni model kad nacrt nije modeliran: pravokutnik, dvostrešni krov, prozori ravnomjerno
-export function autoModel({ W = 10, D = 8, floors = 2, storeyH = 2.9, pitch = 30, ov = 0.6 } = {}) {
+// okvirni model iz dimenzija (kuća ili stambena zgrada): pravokutnik, prozori ravnomjerno po etažama
+export function autoModel(d = {}) {
+  const { W, D, floors, storeyH, pitch, ov } = clampDims({ W: 10, D: 8, floors: 2, storeyH: 2.9, pitch: 30, ov: 0.6, ...d });
   const eave = floors * storeyH + 0.2, ridgeX = W / 2, ridge = eave + Math.tan(pitch * Math.PI / 180) * ridgeX;
   const fp = [[0, 0], [W, 0], [W, D], [0, D]];
-  const openings = [];
+  const openings = [], big = floors >= 3;
   fp.forEach((p, e) => {
     const q = fp[(e + 1) % 4], L = Math.hypot(q[0] - p[0], q[1] - p[1]);
     const n = Math.max(1, Math.floor(L / 3));
     for (let f = 0; f < floors; f++) for (let k = 0; k < n; k++) {
       const u = (k + 0.5) * L / n;
-      if (e === 3 && f === 0 && k === Math.floor(n / 2)) openings.push({ e, u, w: 1.1, h: 2.15, s: 0, t: 'door' });
-      else openings.push({ e, u, w: 1.2, h: 1.3, s: f * storeyH + 0.9, t: 'win' });
+      if (e === 3 && f === 0 && k === Math.floor(n / 2)) openings.push({ e, u, w: big ? 1.6 : 1.1, h: big ? 2.3 : 2.15, s: 0, t: 'door' });
+      else openings.push({ e, u, w: big && k % 2 ? 1.6 : 1.2, h: big && k % 2 ? 1.5 : 1.3, s: f * storeyH + 0.9, t: 'win' });
     }
   });
-  return { v: 2, src: 'auto', fp, floors, storeyH, eave, ridge, ridgeX, ov, wallT: 0.4, base: 0.4, roof: { type: 'gable' }, openings, balcony: null, canopy: null, chimneys: [{ x: W * 0.35, z: D * 0.4, s: 0.5, top: ridge + 0.6 }], colors: { ...DEFAULT_COLORS }, labels: ['Pročelje 1 (sjever)', 'Pročelje 2 (istok)', 'Pročelje 3 (jug)', 'Pročelje 4 (zapad)'] };
+  return { v: 2, src: 'auto', fp, floors, storeyH, eave, ridge, ridgeX, ov, wallT: 0.4, base: big ? 0.6 : 0.4, roof: { type: 'gable' }, openings, balcony: null, canopy: null, chimneys: [{ x: W * 0.35, z: D * 0.4, s: 0.5, top: ridge + 0.6 }], colors: { ...DEFAULT_COLORS }, labels: ['Pročelje 1 (sjever)', 'Pročelje 2 (istok)', 'Pročelje 3 (jug)', 'Pročelje 4 (zapad)'] };
+}
+
+/* ---------- vrste objekta i dimenzije ---------- */
+// Uobičajene polazne dimenzije (nisu propis): korisnik svaku može promijeniti. build = uobičajena izvedba za tu vrstu.
+export const TYPES = [
+  { id: 'nacrt', n: 'Po nacrtu', note: 'Model složen iz priloženih nacrta', demo: true, build: { krovOblik: 'gable', pokrov: 'crijep', konstrukcija: 'opeka25', temelji: 'trakasti' } },
+  { id: 'prizemnica', n: 'Prizemnica', d: { W: 12, D: 9, floors: 1, storeyH: 2.9, pitch: 25, ov: 0.6 }, build: { krovOblik: 'hip', konstrukcija: 'opeka25', temelji: 'trakasti' } },
+  { id: 'kuca', n: 'Obiteljska kuća P+1', d: { W: 10, D: 8, floors: 2, storeyH: 2.9, pitch: 30, ov: 0.6 }, build: { krovOblik: 'gable', konstrukcija: 'opeka25', temelji: 'trakasti' } },
+  { id: 'zgrada3', n: 'Manja stambena zgrada P+2', d: { W: 16, D: 11, floors: 3, storeyH: 2.95, pitch: 25, ov: 0.5 }, build: { krovOblik: 'hip', konstrukcija: 'opeka30', temelji: 'trakasti' } },
+  { id: 'zgrada5', n: 'Stambena zgrada P+4', d: { W: 22, D: 13, floors: 5, storeyH: 3.0, pitch: 20, ov: 0.4 }, build: { krovOblik: 'flat', konstrukcija: 'ab', temelji: 'ploca' } },
+];
+export const DIM_LIM = { W: [4, 40], D: [4, 30], floors: [1, 8], storeyH: [2.4, 4.5], pitch: [5, 55], ov: [0, 1.5] };
+export function clampDims(d) {
+  const o = {};
+  Object.entries(DIM_LIM).forEach(([k, [lo, hi]]) => { let v = Number(d[k]); if (!isFinite(v) || !v && k !== 'ov') return; if (k === 'floors') v = Math.round(v); o[k] = Math.min(hi, Math.max(lo, v)); });
+  return o;
+}
+export const etaze = (n) => n <= 1 ? 'P' : 'P+' + (n - 1);
+// stvarne dimenzije modela (za obrazac)
+export function modelDims(m) {
+  const b = bbox(m), rise = (m.ridge - m.eave) / Math.max(0.1, m.ridgeX - b.x0);
+  return { W: rd(b.x1 - b.x0), D: rd(b.z1 - b.z0), floors: m.floors, storeyH: rd(m.storeyH), pitch: Math.round(Math.atan(rise) * 1800 / Math.PI) / 10, ov: rd(m.ov) };
+}
+const rd = (n) => Math.round(n * 100) / 100;
+// Promjena dimenzija modela složenog iz nacrta: tlocrt se rasteže, otvori zadržavaju veličinu i slijede zid,
+// etaže se dodaju (ponavlja se zadnja) ili oduzimaju, visina etaže pomiče otvore. Uvijek se polazi od izvornog modela.
+export function resizeModel(base, dims) {
+  const d = { ...modelDims(base), ...clampDims(dims || {}) }, b = bbox(base), E0 = edges(base);
+  const sx = d.W / (b.x1 - b.x0), sz = d.D / (b.z1 - b.z0), h = d.storeyH, h0 = base.storeyH, n = d.floors, n0 = base.floors;
+  const X = (x) => b.x0 + (x - b.x0) * sx, Z = (z) => b.z0 + (z - b.z0) * sz;
+  const m = JSON.parse(JSON.stringify(base));
+  m.fp = base.fp.map(([x, z]) => [rd(X(x)), rd(Z(z))]);
+  const E1 = edges(m), rise0 = base.ridge - base.eave;
+  m.floors = n; m.storeyH = h; m.eave = rd(n * h + (base.eave - n0 * h0)); m.ridgeX = rd(X(base.ridgeX)); m.ov = d.ov;
+  m.ridge = rd(m.eave + Math.tan(d.pitch * Math.PI / 180) * (m.ridgeX - b.x0));
+  const rise = m.ridge - m.eave, out = [];
+  const fits = (o) => !out.some((q) => q.e === o.e && Math.abs(q.u - o.u) < (q.w + o.w) / 2 + 0.15 && q.s < o.s + o.h && o.s < q.s + q.h);
+  base.openings.forEach((o) => {
+    const L = E1[o.e].L, k = L / E0[o.e].L; if (L < o.w + 0.6) return;
+    const u = Math.min(L - o.w / 2 - 0.3, Math.max(o.w / 2 + 0.3, o.u * k));
+    const put = (s) => { const c = { ...o, u: rd(u), s: rd(s) }; if (fits(c)) out.push(c); };
+    if (o.s >= base.eave - 0.05) return put(m.eave + (o.s - base.eave) * (rise / rise0)); // zabatni prozor
+    const f = Math.min(n0 - 1, Math.floor((o.s + 0.01) / h0)), rel = h >= h0 ? o.s - f * h0 : Math.min(o.s - f * h0, Math.max(0, h - o.h - 0.25));
+    if (f === 0) { if (o.s + o.h <= m.eave) put(rel); return; }
+    for (let ff = 1; ff < n; ff++) if (Math.min(ff, n0 - 1) === f) put(ff * h + rel);
+  });
+  m.openings = out;
+  if (base.balcony) { const B = base.balcony, lvl = Math.round(B.y / h0); m.balcony = lvl < n ? { x0: rd(X(B.x0)), x1: rd(X(B.x0) + (B.x1 - B.x0)), z0: rd(Z(B.z0)), z1: rd(Z(B.z0) + (B.z1 - B.z0)), y: rd(lvl * h) } : null; }
+  if (base.canopy) { const K = base.canopy; m.canopy = { ...K, z0: rd(Z(K.z0)), z1: rd(Z(K.z0) + (K.z1 - K.z0)), y: rd(Math.min(K.y, h - 0.2)) }; }
+  m.chimneys = (base.chimneys || []).map((c) => ({ ...c, x: rd(X(c.x)), z: rd(Z(c.z)), top: rd(c.top + (m.ridge - base.ridge)) }));
+  m.resized = ['W', 'D', 'floors', 'storeyH', 'pitch', 'ov'].some((k) => Math.abs(d[k] - modelDims(base)[k]) > 0.005);
+  return m;
 }
 
 /* ---------- geometrija ---------- */
@@ -233,7 +286,7 @@ export const DEFAULT_BUILD = { tlo: 'k3', temelji: 'trakasti', konstrukcija: 'op
 export const optOf = (k, id) => OPT[k].opts.find((o) => o.id === id) || OPT[k].opts[0];
 // koje stavke troškovnika (slotovi) ovise o kojoj odluci
 export const SLOTS_OF = { tlo: ['iskop'], temelji: ['iskop', 'temelji'], konstrukcija: ['zid'], krovOblik: ['krovK', 'pokrov', 'oluk', 'zid', 'fasada'], pokrov: ['pokrov'], fasada: ['fasada'], stolarija: ['stolarija'], staklo: ['stolarija'], klizna: ['stolarija'] };
-export const ALL_SLOTS = ['iskop', 'temelji', 'zid', 'krovK', 'pokrov', 'oluk', 'fasada', 'stolarija'];
+export const ALL_SLOTS = ['iskop', 'temelji', 'zid', 'ploce', 'krovK', 'pokrov', 'oluk', 'fasada', 'stolarija'];
 export const COST_OF = { tlo: ['iskop'], temelji: ['iskop', 'temelji'], konstrukcija: ['zid'], krovOblik: ['krovK', 'pokrov', 'oluk'], pokrov: ['pokrov'], fasada: ['fasada'], stolarija: ['stolarija'], staklo: ['stolarija'], klizna: ['stolarija'] };
 // okvirne cijene stavki koje ne ovise o odabiru
 export const PRICE = { odvoz: 10, podna: 110, podlozni: 20, serklazi: 230, krovK: 32, osb: 22, oluk: 22, cijev: 20, padBeton: 18, krovIzol: 38, opsav: 28, slivnik: 120, ispuna: 28, humus: 4.5, sljunak: 27, hidro: 16, stropna: 120, armatura: 1.7 };
@@ -277,7 +330,7 @@ export function buildItems(m, b) {
   }
   // zidovi / konstrukcija
   const ks = optOf('konstrukcija', b.konstrukcija), ok = b.konstrukcija, cm = Math.round(ks.t * 100);
-  const zb = `Zidovi do krova ${f2(Q.gross)} m² − otvori ${f2(Q.openA)} m² (iz 3D modela: opseg ${f2(Q.per)} m, ${Q.floors} etaže).`;
+  const zb = `Zidovi do krova ${f2(Q.gross)} m² − otvori ${f2(Q.openA)} m² (iz 3D modela: opseg ${f2(Q.per)} m, etaža: ${Q.floors}).`;
   if (ks.zid) {
     const Sx = serklazi(mm, ks.t);
     add('zid', 'zid', 'g04', 'konstrukcija', b.konstrukcija === 'puna' ? `Zidanje vanjskih nosivih zidova punom opekom d=${cm} cm u produžnom mortu M10` : `Zidanje vanjskih nosivih zidova opekarskim blokom d=${cm} cm (skupina 2) u mortu M10`, 'm²', Q.net, ks.p, zb, ok);
@@ -289,6 +342,7 @@ export function buildItems(m, b) {
     add('zid', 'skelet', 'g03', 'konstrukcija', 'Betoniranje AB skeleta: stupovi 30/30 i grede 30/40 cm, C30/37, s oplatom', 'm³', vol, ks.p, `${nC} stupova × 0,09 m² × ${f2(mm.eave)} m + grede ${f2(Q.per * Q.floors)} m × 0,12 m².`, ok);
     add('zid', 'zid', 'g04', 'konstrukcija', 'Zidanje ispune AB skeleta šupljom opekom d=25 cm (nenosivo), sa sidrenjem u stupove', 'm²', Q.net, PRICE.ispuna, zb, ok);
   }
+  add('ploce', 'stropna', 'g03', 'konstrukcija', 'Betoniranje AB stropnih ploča d=20 cm betonom C25/30, s oplatom i podupiranjem', 'm³', Q.A * 0.2 * Q.floors, PRICE.stropna, `${Q.floors} ${Q.floors === 1 ? 'ploča' : 'ploče/ploča'} (nad svakom etažom) × tlocrt ${f2(Q.A)} m² × 0,20 m.`, 'ab20');
   // krov
   const flat = Q.kind === 'flat', pk = optOf('pokrov', b.pokrov), okr = flat ? 'ravni' : 'kosi';
   const kb = flat ? `Tlocrt krova unutar atike ${f2(Q.roofA)} m².` : `Tlocrt krova s prepustima ${f2(Q.roofPlan)} m², nagib ${f2(Q.pitch)}° → ploha ${f2(Q.roofA)} m² (${optOf('krovOblik', b.krovOblik).n.toLowerCase()} krov).`;
