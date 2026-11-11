@@ -1,4 +1,4 @@
-// Građevinski program – prototip v0.1
+// Građevinski program – prototip v0.4
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('./lib/pdf.worker.min.js', import.meta.url).href;
@@ -255,24 +255,37 @@ async function analyzeAllPages() {
 }
 function scaleOf(page) { return P.pageScale[page]?.mPerPt || null; }
 
+// Platno nacrta se crta točno u fizičkim pikselima zaslona (bez razvlačenja), izvan ekrana, pa se zamijeni odjednom (bez treperenja).
+let renderSeq = 0;
+function pdfSizes(base) {
+  const dpr = window.devicePixelRatio || 1, cssW = Math.round(base.width * zoom), cssH = Math.round(base.height * zoom);
+  let k = dpr; const MAXPX = 24e6; if (cssW * cssH * k * k > MAXPX) k = Math.sqrt(MAXPX / (cssW * cssH));
+  return { cssW, cssH, pxW: Math.round(cssW * k), pxH: Math.round(cssH * k) };
+}
 async function renderPdfPage() {
   const paper = $('#paper');
   if (!pdfDoc) { paper.hidden = true; $('#emptyStage').hidden = false; drawOverlay(); return; }
   $('#emptyStage').hidden = true; paper.hidden = false;
-  const page = await pdfDoc.getPage(curPage);
+  const seq = ++renderSeq, pageNo = curPage;
+  const page = await pdfDoc.getPage(pageNo);
+  if (seq !== renderSeq) return;
   const base = page.getViewport({ scale: 1 });
   if (!zoom) { const st = $('#stage'); zoom = Math.max(0.3, Math.min(4, (st.clientWidth - 48) / base.width)); }
-  const dpr = window.devicePixelRatio || 1;
-  const vp = page.getViewport({ scale: zoom * dpr });
-  const cv = $('#pdfCanvas');
-  cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
-  cv.style.width = Math.floor(base.width * zoom) + 'px'; cv.style.height = Math.floor(base.height * zoom) + 'px';
+  const { cssW, cssH, pxW, pxH } = pdfSizes(base);
+  const cv = $('#pdfCanvas'), firstPaint = cv.dataset.page !== String(pageNo) + '|' + (P.pdf?.url || P.pdf?.name || '');
+  cv.style.width = cssW + 'px'; cv.style.height = cssH + 'px';
   pageView = base;
-  if (renderTask) { try { renderTask.cancel(); } catch {} }
-  renderTask = page.render({ canvasContext: cv.getContext('2d'), viewport: vp });
-  try { await renderTask.promise; } catch (e) { if (e?.name !== 'RenderingCancelledException') console.warn(e); }
   $('#zoomLbl').textContent = Math.round(zoom * 100) + '%';
   drawOverlay();
+  if (renderTask) { try { renderTask.cancel(); } catch {} }
+  const off = document.createElement('canvas'); off.width = pxW; off.height = pxH;
+  const octx = off.getContext('2d', { alpha: false }); octx.fillStyle = '#fff'; octx.fillRect(0, 0, pxW, pxH);
+  if (firstPaint) { cv.width = pxW; cv.height = pxH; const c = cv.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, pxW, pxH); }
+  const task = renderTask = page.render({ canvasContext: octx, viewport: page.getViewport({ scale: pxW / base.width }) });
+  try { await task.promise; } catch (e) { if (e?.name !== 'RenderingCancelledException') console.warn(e); return; }
+  if (seq !== renderSeq) return;
+  cv.width = pxW; cv.height = pxH; cv.getContext('2d').drawImage(off, 0, 0);
+  cv.dataset.page = String(pageNo) + '|' + (P.pdf?.url || P.pdf?.name || '');
 }
 async function pageImageBlob(pageNo, maxW = 1600) {
   const page = await pdfDoc.getPage(pageNo);
@@ -308,8 +321,8 @@ async function renderThumbs() {
     b.onclick = () => { curPage = i; cancelDraw(); renderNacrt(); };
     box.append(b);
     pdfDoc.getPage(i).then((page) => {
-      const base = page.getViewport({ scale: 1 }); const s = 140 / base.width; const vp = page.getViewport({ scale: s });
-      const c = $('canvas', b); c.width = vp.width; c.height = vp.height; page.render({ canvasContext: c.getContext('2d'), viewport: vp });
+      const base = page.getViewport({ scale: 1 }), tw = Math.round(160 * Math.min(window.devicePixelRatio || 1, 3)); const vp = page.getViewport({ scale: tw / base.width });
+      const c = $('canvas', b); c.width = tw; c.height = Math.round(vp.height); page.render({ canvasContext: c.getContext('2d'), viewport: vp });
     });
   }
   const v3 = document.createElement('button'); v3.className = 'pg v3d-card';
@@ -419,7 +432,12 @@ function setupStage() {
   $('#zoomFit').onclick = () => { zoom = 0; renderPdfPage(); };
   $('#finishBtn').onclick = finishDraw; $('#cancelBtn').onclick = cancelDraw;
 }
-function setZoom(z) { zoom = Math.max(0.25, Math.min(6, z)); renderPdfPage(); }
+let zoomTimer = null;
+function setZoom(z) {
+  zoom = Math.max(0.25, Math.min(6, z));
+  if (pageView) { const { cssW, cssH } = pdfSizes(pageView), cv = $('#pdfCanvas'); cv.style.width = cssW + 'px'; cv.style.height = cssH + 'px'; $('#zoomLbl').textContent = Math.round(zoom * 100) + '%'; drawOverlay(); }
+  clearTimeout(zoomTimer); zoomTimer = setTimeout(renderPdfPage, 130);
+}
 
 function recalcItem(it) {
   if (it.qtyMode !== 'meas') return;
@@ -877,7 +895,7 @@ function renderUgovor() {
 
 
 /* ---------- 3D PRIKAZ ---------- */
-let VZ = null, V = null, v3dStage = 5;
+let VZ = null, V = null, V3P = null, v3dStage = 5;
 const STAGES3D = [
   { n: 'Iskop', ph: ['pripremni', 'iskop'] }, { n: 'Temelji', ph: ['temelji'] }, { n: 'Konstrukcija', ph: ['konstrukcija'] },
   { n: 'Krovište', ph: ['krov'] }, { n: 'Fasada i stolarija', ph: ['fasada', 'instalacije'] }, { n: 'Gotov objekt', ph: ['zavrsni'] },
@@ -907,7 +925,7 @@ async function render3D() {
   catch (e) { console.warn(e); $('#v3dLoad').textContent = '3D prikaz se nije mogao učitati u ovom pregledniku.'; return; }
   if (!P.model) { P.model = P.pdf?.demo ? VZ.demoModel() : VZ.autoModel(P.modelDims || {}); touch(false); }
   if (!V) {
-    try { V = new VZ.Viz3D($('#v3dHost'), { onPick: show3dInfo }); }
+    try { V = await (V3P ||= VZ.Viz3D.create($('#v3dHost'), { onPick: show3dInfo })); }
     catch (e) { console.warn(e); $('#v3dLoad').textContent = 'Ovaj preglednik ne podržava WebGL 3D prikaz.'; return; }
     $('#v3dLoad')?.remove();
   }
@@ -932,9 +950,9 @@ function renderSide3d() {
     <p class="note" style="margin-top:6px">Mišem okreći model, kotačićem približi. Klikni dio kuće (krov, fasadu, prozor) i vidjet ćeš njegove stavke iz troškovnika.</p></div>
   <div class="box"><h3>Slike visoke rezolucije</h3>
     <label class="note" for="v3dRes">Rezolucija</label>
-    <select id="v3dRes" class="btn"><option value="2560x1440" selected>2560 × 1440 (QHD, preporučeno)</option><option value="3200x1800">3200 × 1800 (vrlo oštro)</option><option value="1920x1080">1920 × 1080 (Full HD)</option></select>
+    <select id="v3dRes" class="btn"><option value="2560x1440" selected>2560 × 1440 (QHD)</option><option value="3200x1800">3200 × 1800 (najoštrije)</option><option value="1920x1080">1920 × 1080 (Full HD)</option></select>
     <button class="btn primary" id="v3dShot">Spremi trenutni pogled (PNG)</button>
-    <button class="btn" id="v3dAll">Spremi sva pročelja i perspektivu</button></div>
+    <button class="btn" id="v3dAll" title="Sprema sva pročelja i perspektivu, sliku po sliku">Spremi sve poglede</button></div>
   <div><h3>Boje</h3><div class="viewgrid" style="margin:6px 0 8px">${VZ.COLOR_PRESETS.map((p, i) => `<button class="btn small" data-pre="${i}" title="${esc(p.n)}">${esc(p.n.split(' (')[0])}</button>`).join('')}</div>
     <div class="swatches">${COLOR_LBL.map(([k, l]) => `<label for="c_${k}"><input type="color" id="c_${k}" data-col="${k}" value="${esc(C[k] || VZ.DEFAULT_COLORS[k])}">${l}</label>`).join('')}</div></div>
   <div class="box"><h3>Model</h3>
@@ -944,8 +962,8 @@ function renderSide3d() {
     : `<p class="note">Model je složen iz nacrta: tlocrti, presjek 1-1 i pročelja (1:100). Tlocrt ${fq(bboxW(m))} × ${fq(bboxD(m))} m, streha +${fq(m.eave)}, sljeme +${fq(m.ridge)}, ${nOpen} otvora, balkon i nadstrešnica.</p>`}
     <button class="btn small" id="v3dSwitch">${auto && P.pdf?.demo ? 'Vrati model iz nacrta' : 'Okvirni model iz dimenzija'}</button></div>`;
   $$('[data-vw]').forEach((b) => b.onclick = () => V.view(isNaN(+b.dataset.vw) ? b.dataset.vw : +b.dataset.vw));
-  $$('[data-pre]').forEach((b) => b.onclick = () => { Object.assign(P.model.colors, VZ.COLOR_PRESETS[b.dataset.pre].c); V.build(P.model); touch(false); renderSide3d(); });
-  $$('[data-col]').forEach((inp) => inp.oninput = () => { clearTimeout(inp._t); inp._t = setTimeout(() => { P.model.colors[inp.dataset.col] = inp.value; V.build(P.model); touch(false); }, 120); });
+  $$('[data-pre]').forEach((b) => b.onclick = () => { V.setColors(VZ.COLOR_PRESETS[b.dataset.pre].c); touch(false); renderSide3d(); });
+  $$('[data-col]').forEach((inp) => inp.oninput = () => { clearTimeout(inp._t); inp._t = setTimeout(() => { V.setColors({ [inp.dataset.col]: inp.value }); touch(false); }, 30); });
   $('#v3dShot').onclick = () => shot3d(null);
   $('#v3dAll').onclick = () => shotAll3d();
   const ap = $('#v3dApply'); if (ap) ap.onclick = () => { const nd = {}; $$('[data-md]').forEach((i) => { const v = parseNum(i.value); if (v) nd[i.dataset.md] = v; }); P.modelDims = nd; const cols = P.model.colors; P.model = VZ.autoModel(nd); P.model.colors = cols; touch(false); render3D(); };
@@ -1046,7 +1064,7 @@ function aiTools() {
       execute: async (a = {}) => { if (!VZ) VZ = await import('./viz3d.js'); if (!P.model) P.model = P.pdf?.demo ? VZ.demoModel() : VZ.autoModel(P.modelDims || {});
         if (a.dimenzije) { const d = a.dimenzije; P.modelDims = { W: d.sirina, D: d.dubina, floors: d.etaze, storeyH: d.visinaEtaze, pitch: d.nagib }; Object.keys(P.modelDims).forEach((k) => P.modelDims[k] == null && delete P.modelDims[k]); const cols = P.model.colors; P.model = VZ.autoModel(P.modelDims); P.model.colors = cols; aiLog.push('3D: okvirni model ' + JSON.stringify(P.modelDims)); }
         if (a.boje) { Object.entries(a.boje).forEach(([k, v]) => { if (/^#[0-9a-f]{6}$/i.test(v)) P.model.colors[k] = v; }); aiLog.push('3D: boje ' + Object.keys(a.boje).join(', ')); }
-        touch(); if (V) { V.build(P.model); if (view === '3d') renderSide3d(); } return { ok: true, boje: P.model.colors }; } },
+        touch(); if (V) { if (V.model !== P.model) V.build(P.model); else V.setColors({}); if (view === '3d') renderSide3d(); } return { ok: true, boje: P.model.colors }; } },
     { name: 'tekst_ugovora', description: 'Vrati trenutni tekst ugovora (HTML).', inputSchema: { type: 'object', properties: {} }, execute: () => ({ html: (P.contract?.html || contractHtml()).slice(0, 12000) }) },
     { name: 'zamijeni_ugovor', description: 'Zamijeni tekst ugovora novim HTML-om (samo kad korisnik traži izmjenu ugovora). Koristi <h2>, <h4>, <p>, <table>.', inputSchema: { type: 'object', properties: { html: { type: 'string' } }, required: ['html'] },
       execute: ({ html }) => { const clean = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/ on\w+="[^"]*"/gi, ''); P.contract = { html: clean, edited: true, at: Date.now() }; aiLog.push('✎ ugovor izmijenjen (AI) – pregledaj karticu Ugovor'); touch(); return { ok: true }; } },
@@ -1202,7 +1220,8 @@ async function boot() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#modalBg').classList.contains('open')) closeModal(); });
   $('#pdfFile').onchange = (e) => { onPdfFile(e.target.files[0]); e.target.value = ''; };
   $('#jsonFile').onchange = (e) => { onJsonFile(e.target.files[0]); e.target.value = ''; };
-  window.addEventListener('resize', () => { if (view === 'nacrt' && zoom === 0) renderPdfPage(); });
+  let lastDpr = window.devicePixelRatio;
+  window.addEventListener('resize', () => { if (window.devicePixelRatio !== lastDpr) { lastDpr = window.devicePixelRatio; thumbsKey = ''; if (view === 'nacrt') renderNacrt(); V?.syncDpr(); } });
   setupStage(); setupChat(); setRole(role); setTool('pan');
   // prvi prikaz: primjer odmah, dok se ne učita spremljeno
   setSave('Učitavam…');

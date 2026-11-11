@@ -1,7 +1,9 @@
 // 3D prikaz objekta: model iz nacrta (tlocrt, presjek, pročelja) + faze gradnje iz troškovnika.
 // Tlocrt: x udesno, z prema dolje (kao na nacrtu); y = visina. Sve u metrima.
-// Kvaliteta: fizikalno nebo i sunce, meke sjene, ambijentalna okluzija (GTAO), MSAA, teksture s reljefom (normal mape),
+// Kvaliteta: nebo i sunce, meke sjene, ambijentalna okluzija (GTAO), MSAA, teksture s reljefom (normal mape),
 // arhitektonska perspektiva s ravnim vertikalama, slike s višestrukim uzorkovanjem (SSAA).
+// Brzina: sjene se računaju samo kad se scena promijeni, geometrija je spojena po materijalu (malo poziva crtanja),
+// dok se model okreće okluzija ide u pola rezolucije, a kad stane iscrta se jedna slika u punoj kvaliteti.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -85,7 +87,10 @@ function grain(c, h, s, base, amt, n, hamt = 0.5) {
   c.fillStyle = base; c.fillRect(0, 0, s, s); h.fillStyle = '#808080'; h.fillRect(0, 0, s, s);
   for (let i = 0; i < n; i++) { const x = rand() * s, y = rand() * s, v = rand() > 0.5 ? 255 : 0, r = 1 + rand() * 1.5; c.fillStyle = `rgba(${v},${v},${v},${rand() * amt})`; c.fillRect(x, y, r, r); h.fillStyle = `rgba(${v},${v},${v},${rand() * hamt})`; h.fillRect(x, y, r, r); }
 }
-function makeTextures() {
+let TEX_CACHE = null;
+const breathe = () => new Promise((r) => setTimeout(r));
+async function makeTextures() {
+  if (TEX_CACHE) return TEX_CACHE;
   seed = 11;
   const T = {};
   // silikatna žbuka: sitno zrno
@@ -93,6 +98,7 @@ function makeTextures() {
     grain(c, h, s, '#f4f4f4', 0.06, 90000, 0.7);
     for (let y = 0; y < s; y += 2) for (let x = 0; x < s; x += 8) { const v = fbm(x / 160, y / 160, 3); c.fillStyle = `rgba(${v > 0 ? 255 : 0},${v > 0 ? 255 : 0},${v > 0 ? 255 : 0},${Math.abs(v) * 0.04})`; c.fillRect(x, y, 8, 2); }
   }, 3.5);
+  await breathe();
   // podnožje: kamene ploče
   T.plinth = texPair(1024, (c, h, s) => {
     grain(c, h, s, '#e2e0dc', 0.12, 60000, 0.6);
@@ -102,6 +108,7 @@ function makeTextures() {
     for (let r = 0; r <= rows; r++) { c.beginPath(); c.moveTo(0, r * s / rows); c.lineTo(s, r * s / rows); c.stroke(); h.beginPath(); h.moveTo(0, r * s / rows); h.lineTo(s, r * s / rows); h.stroke(); }
     for (let r = 0; r < rows; r++) for (let k = 0; k <= cols; k++) { const x = k * s / cols + (r % 2 ? s / cols / 2 : 0); [c, h].forEach((g) => { g.beginPath(); g.moveTo(x % s, r * s / rows); g.lineTo(x % s, (r + 1) * s / rows); g.stroke(); }); }
   }, 4);
+  await breathe();
   // glineni utoreni crijep: redovi s preklopom, valovit profil, varijacija boje po crijepu
   T.tiles = texPair(1024, (c, h, s) => {
     c.fillStyle = '#4a4a4a'; c.fillRect(0, 0, s, s); h.fillStyle = '#000'; h.fillRect(0, 0, s, s);
@@ -120,6 +127,7 @@ function makeTextures() {
     }
     for (let i = 0; i < 26000; i++) { c.fillStyle = `rgba(${rand() > .5 ? '255,255,255' : '0,0,0'},${rand() * 0.05})`; c.fillRect(rand() * s, rand() * s, 2, 2); }
   }, 6);
+  await breathe();
   // opeka (blok) za fazu konstrukcije
   T.block = texPair(1024, (c, h, s) => {
     c.fillStyle = '#c9bfae'; c.fillRect(0, 0, s, s); h.fillStyle = '#202020'; h.fillRect(0, 0, s, s);
@@ -132,13 +140,17 @@ function makeTextures() {
     }
     for (let i = 0; i < 30000; i++) { c.fillStyle = `rgba(0,0,0,${rand() * 0.06})`; c.fillRect(rand() * s, rand() * s, 2, 2); }
   }, 3);
+  await breathe();
   T.concrete = texPair(512, (c, h, s) => { grain(c, h, s, '#b9b6ae', 0.14, 40000, 0.5); for (let i = 0; i < 60; i++) { c.fillStyle = `rgba(0,0,0,${rand() * 0.05})`; c.beginPath(); c.arc(rand() * s, rand() * s, 10 + rand() * 40, 0, 7); c.fill(); } }, 2);
+  await breathe();
   T.soil = texPair(512, (c, h, s) => { grain(c, h, s, '#6e5034', 0.3, 50000, 0.9); for (let i = 0; i < 300; i++) { const g = 90 + rand() * 60; c.fillStyle = `rgb(${g},${g * 0.8},${g * 0.6})`; c.beginPath(); c.arc(rand() * s, rand() * s, 1 + rand() * 4, 0, 7); c.fill(); } }, 4);
+  await breathe();
   // travnjak: vlati + mrlje
   T.grass = texPair(1024, (c, h, s) => {
     c.fillStyle = '#d6d6d6'; c.fillRect(0, 0, s, s); h.fillStyle = '#606060'; h.fillRect(0, 0, s, s);
     for (let i = 0; i < 26000; i++) { const x = rand() * s, y = rand() * s, l = 4 + rand() * 9, a = -0.5 + rand(), g = 150 + rand() * 105; c.strokeStyle = `rgba(${g * 0.9},${g},${g * 0.75},.75)`; h.strokeStyle = `rgba(255,255,255,${0.3 + rand() * 0.5})`; c.lineWidth = h.lineWidth = 1.2; [c, h].forEach((q) => { q.beginPath(); q.moveTo(x, y); q.lineTo(x + Math.sin(a) * l, y - Math.cos(a) * l); q.stroke(); }); }
   }, 2.5);
+  await breathe();
   // opločnik: betonske ploče 40×40 s fugama
   T.paving = texPair(1024, (c, h, s) => {
     c.fillStyle = '#7d7a73'; c.fillRect(0, 0, s, s); h.fillStyle = '#000'; h.fillRect(0, 0, s, s);
@@ -146,10 +158,14 @@ function makeTextures() {
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const g = 188 + rand() * 26; c.fillStyle = `rgb(${g},${g - 3},${g - 9})`; c.fillRect(x * w + 3, y * w + 3, w - 6, w - 6); h.fillStyle = '#d0d0d0'; h.fillRect(x * w + 3, y * w + 3, w - 6, w - 6); }
     for (let i = 0; i < 50000; i++) { c.fillStyle = `rgba(0,0,0,${rand() * 0.07})`; c.fillRect(rand() * s, rand() * s, 2, 2); }
   }, 5);
+  await breathe();
   T.osb = texPair(512, (c, h, s) => { c.fillStyle = '#c99a5b'; c.fillRect(0, 0, s, s); h.fillStyle = '#808080'; h.fillRect(0, 0, s, s); for (let i = 0; i < 1600; i++) { const col = rand() > .5 ? '120,70,20' : '240,200,140'; c.fillStyle = `rgba(${col},${0.2 + rand() * 0.3})`; h.fillStyle = `rgba(${rand() > .5 ? '255,255,255' : '0,0,0'},.3)`; const x = rand() * s, y = rand() * s, a = rand() * 3.14, w = 10 + rand() * 18, hh = 3 + rand() * 4; [c, h].forEach((q) => { q.save(); q.translate(x, y); q.rotate(a); q.fillRect(0, 0, w, hh); q.restore(); }); } }, 2);
+  await breathe();
   T.leaf = texPair(512, (c, h, s) => { c.fillStyle = '#9a9a9a'; c.fillRect(0, 0, s, s); h.fillStyle = '#404040'; h.fillRect(0, 0, s, s); for (let i = 0; i < 9000; i++) { const x = rand() * s, y = rand() * s, r = 2 + rand() * 5, g = 140 + rand() * 115; c.fillStyle = `rgb(${g * 0.85},${g},${g * 0.7})`; h.fillStyle = `rgba(255,255,255,${0.4 + rand() * 0.6})`; [c, h].forEach((q) => { q.beginPath(); q.ellipse(x, y, r, r * 0.55, rand() * 3.14, 0, 7); q.fill(); }); } }, 5);
+  await breathe();
   T.bark = texPair(256, (c, h, s) => { c.fillStyle = '#6a4a32'; c.fillRect(0, 0, s, s); h.fillStyle = '#808080'; h.fillRect(0, 0, s, s); for (let i = 0; i < 400; i++) { const x = rand() * s, g = 60 + rand() * 50; c.fillStyle = `rgba(${g},${g * 0.75},${g * 0.55},.7)`; h.fillStyle = `rgba(0,0,0,.5)`; c.fillRect(x, 0, 2 + rand() * 3, s); h.fillRect(x, 0, 2, s); } }, 3);
-  return T;
+  await breathe();
+  return (TEX_CACHE = T);
 }
 
 /* ---------- geometrija ---------- */
@@ -160,10 +176,34 @@ function isCW(m) { let a = 0; m.fp.forEach((p, i) => { const q = m.fp[(i + 1) % 
 function roofH(m, x) { const b = bbox(m); return x <= m.ridgeX ? m.eave + (x - b.x0) / (m.ridgeX - b.x0) * (m.ridge - m.eave) : m.eave + (b.x1 - x) / (b.x1 - m.ridgeX) * (m.ridge - m.eave); }
 function outward(m, e) { const s = isCW(m) ? 1 : -1; return [e.dz * s, -e.dx * s]; }
 
+// spoji sve mreže u grupi u po jednu mrežu za svaki materijal (manje poziva crtanja, ista slika)
+function mergeMeshes(root, noShadow = new Set()) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), by = new Map(), m4 = new THREE.Matrix4();
+  root.traverse((o) => {
+    if (!o.isMesh || Array.isArray(o.material)) return;
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    g.applyMatrix4(m4.multiplyMatrices(inv, o.matrixWorld));
+    if (!by.has(o.material)) by.set(o.material, { pos: [], nrm: [], uv: [] });
+    const b = by.get(o.material); b.pos.push(g.attributes.position.array); b.nrm.push(g.attributes.normal.array); b.uv.push(g.attributes.uv.array);
+    g.dispose(); o.geometry.dispose();
+  });
+  const cat = (arrs) => { const out = new Float32Array(arrs.reduce((n, a) => n + a.length, 0)); let k = 0; arrs.forEach((a) => { out.set(a, k); k += a.length; }); return out; };
+  const grp = new THREE.Group();
+  by.forEach((b, mat) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(cat(b.pos), 3)); g.setAttribute('normal', new THREE.BufferAttribute(cat(b.nrm), 3)); g.setAttribute('uv', new THREE.BufferAttribute(cat(b.uv), 2));
+    const mesh = new THREE.Mesh(g, mat); mesh.userData.noShadow = noShadow.has(mat); grp.add(mesh);
+  });
+  return grp;
+}
+
 export class Viz3D {
-  constructor(host, api) {
-    this.host = host; this.api = api; this.stage = 5; this.parts = []; this.dirty = true;
-    const r = this.renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+  // teksture se pripremaju s predasima, da stranica ne zastane dok se 3D otvara
+  static async create(host, api) { return new Viz3D(host, api, await makeTextures()); }
+  constructor(host, api, textures) {
+    this.host = host; this.api = api; this.stage = 5; this.parts = []; this.needFull = true; this.needFast = false; this.refined = true; this.lastMove = 0; this.level = 0; this.ema = 16; this.nFrames = 0; this.prevT = 0;
+    const r = this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     this.pr = Math.min(window.devicePixelRatio || 1, 2);
     r.setPixelRatio(this.pr);
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -175,8 +215,10 @@ export class Viz3D {
     this.camera = new THREE.PerspectiveCamera(32, 1, 0.1, 5000);
     this.controls = new OrbitControls(this.camera, r.domElement);
     Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.08, maxPolarAngle: Math.PI / 2.03, minDistance: 5, maxDistance: 90 });
-    this.controls.addEventListener('change', () => { this.dirty = true; });
-    this.tex = makeTextures();
+    // prigušenje okretanja ima dug „rep” sitnih pomaka: ispod pola piksela se ne crta, pa oštra slika stiže odmah
+    this.lp = new THREE.Vector3(); this.dragging = false;
+    this.controls.addEventListener('start', () => { this.dragging = true; }); this.controls.addEventListener('end', () => { this.dragging = false; });
+    this.tex = textures;
     Object.values(this.tex).forEach((p) => { p.map.anisotropy = p.nrm.anisotropy = this.maxAniso; });
     this.setupSky(); this.lights();
     this.root = new THREE.Group(); this.scene.add(this.root);
@@ -186,10 +228,49 @@ export class Viz3D {
     r.domElement.addEventListener('pointerup', (e) => { if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 5) this.pick(e); down = null; });
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(host);
     this.running = true;
-    const loop = () => { if (!this.running) return; requestAnimationFrame(loop); if (this.controls.update()) this.dirty = true; if (this.dirty) { this.dirty = false; this.composer.render(); } };
-    loop();
+    // crta se samo kad treba: brza slika dok se model miče, puna kvaliteta čim stane
+    const loop = (t) => {
+      if (!this.running) return; requestAnimationFrame(loop);
+      if (!this.host.clientWidth) return;
+      if (this.controls.update()) { const cam = this.camera.position, d = cam.distanceTo(this.lp) / Math.max(1, cam.distanceTo(this.controls.target)); if (this.dragging || d > 4e-4) { this.needFast = true; this.lp.copy(cam); } }
+      if (this.needFull) { this.needFull = this.needFast = false; this.refined = true; this.prevT = 0; this.draw(false); }
+      else if (this.needFast) { this.needFast = false; this.refined = false; this.lastMove = t; this.pace(t); this.draw(true); }
+      else if (!this.refined && t - this.lastMove > 140) { this.refined = true; this.prevT = 0; this.draw(false); }
+    };
+    requestAnimationFrame(loop);
+  }
+  get dirty() { return this.needFull; }
+  set dirty(v) { if (v) this.needFull = true; }
+  draw(moving) {
+    this.aoFull.enabled = !moving; this.aoHalf.enabled = moving;
+    (moving && this.fast ? this.fast : this.composer).render();
+  }
+  // ako računalo ne stiže ~35 sličica u sekundi dok se model okreće, smanji rezoluciju samo za vrijeme pomicanja
+  pace(t) {
+    const prev = this.prevT; this.prevT = t;
+    if (!prev || t <= prev) return; // prva sličica nakon mirovanja se ne mjeri
+    this.ema = this.ema * 0.85 + Math.min(t - prev, 250) * 0.15; this.nFrames++;
+    if (this.nFrames > 14 && this.ema > 29 && this.level < 2) { this.level++; this.nFrames = 0; this.ema = 16; this.setupFast(); }
+  }
+  aoPass(w, h, half) {
+    const ao = new GTAOPass(this.scene, this.camera, w, h);
+    ao.updateGtaoMaterial({ radius: 0.55, distanceExponent: 1.6, thickness: 1.2, scale: 1.0, samples: 16, distanceFallOff: 1.0 });
+    ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: half ? 4 : 6, rings: 2, samples: 16 });
+    ao.blendIntensity = 0.9;
+    if (half) { const full = ao.setSize.bind(ao); ao.setSize = (a, b) => full(Math.max(1, Math.ceil(a / 2)), Math.max(1, Math.ceil(b / 2))); }
+    return ao;
+  }
+  setupFast() {
+    const w = this.host.clientWidth || 800, h = this.host.clientHeight || 500, k = this.pr * [1, 0.75, 0.6][this.level];
+    if (this.fast) { this.fast.renderTarget1.dispose(); this.fast.renderTarget2.dispose(); this.fastAo.dispose?.(); }
+    const c = this.fast = new EffectComposer(this.renderer, new THREE.WebGLRenderTarget(Math.ceil(w * k), Math.ceil(h * k), { type: THREE.HalfFloatType, samples: 4 }));
+    c.setPixelRatio(k); c.setSize(w, h);
+    c.addPass(new RenderPass(this.scene, this.camera));
+    this.fastAo = this.aoPass(w, h, true); c.addPass(this.fastAo); c.addPass(new OutputPass());
   }
   dispose() { this.running = false; this.ro.disconnect(); this.renderer.dispose(); this.renderer.domElement.remove(); }
+  syncDpr() { const pr = Math.min(window.devicePixelRatio || 1, 2); if (pr === this.pr) return; this.pr = pr; this.renderer.setPixelRatio(pr); this.composer.setPixelRatio(pr); if (this.fast) this.setupFast(); this.forceResize = true; this.resize(); }
+  invalidateShadows() { this.sunLight.shadow.needsUpdate = true; this.needFull = true; }
 
   // nebo: kontrolirani gradijent (zenit → horizont) + sunčev disk; isti se koristi za odsjaje (PMREM)
   skyDome(radius, withSun) {
@@ -216,7 +297,7 @@ export class Viz3D {
     const sun = this.sunLight = new THREE.DirectionalLight('#ffeed6', 2.7);
     sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
     const sc = sun.shadow.camera; sc.left = -20; sc.right = 20; sc.top = 20; sc.bottom = -20; sc.near = 1; sc.far = 120;
-    sun.shadow.bias = -0.00025; sun.shadow.normalBias = 0.025; sun.shadow.radius = 2.5;
+    sun.shadow.bias = -0.00025; sun.shadow.normalBias = 0.025; sun.shadow.radius = 2.5; sun.shadow.autoUpdate = false; sun.shadow.needsUpdate = true;
     this.scene.add(sun); this.scene.add(sun.target);
     const fill = this.fill = new THREE.DirectionalLight('#cfe0ff', 0.45); this.scene.add(fill); this.scene.add(fill.target);
   }
@@ -230,23 +311,24 @@ export class Viz3D {
     this.sky.material.uniforms.sunDir.value.copy(dir); this.envSky.material.uniforms.sunDir.value.copy(dir);
     if (this.envRT) this.envRT.dispose();
     this.envRT = this.pmrem.fromScene(this.envScene, 0); this.scene.environment = this.envRT.texture;
-    this.dirty = true;
+    this.invalidateShadows();
   }
   setupComposer() {
     const r = this.renderer, w = this.host.clientWidth || 800, h = this.host.clientHeight || 500;
     const rt = new THREE.WebGLRenderTarget(w * this.pr, h * this.pr, { type: THREE.HalfFloatType, samples: 4 });
     const c = this.composer = new EffectComposer(r, rt);
+    c.setPixelRatio(this.pr); c.setSize(w, h);
     c.addPass(new RenderPass(this.scene, this.camera));
-    const ao = this.ao = new GTAOPass(this.scene, this.camera, w, h);
-    ao.updateGtaoMaterial({ radius: 0.55, distanceExponent: 1.6, thickness: 1.2, scale: 1.0, samples: 16, distanceFallOff: 1.0 });
-    ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
-    ao.blendIntensity = 0.9;
-    c.addPass(ao); c.addPass(new OutputPass());
+    this.aoFull = this.aoPass(w, h, false); this.aoHalf = this.aoPass(w, h, true); this.aoHalf.enabled = false;
+    c.addPass(this.aoFull); c.addPass(this.aoHalf); c.addPass(new OutputPass());
   }
   resize() {
-    const w = this.host.clientWidth || 800, h = this.host.clientHeight || 500;
-    this.renderer.setSize(w, h, false); this.composer.setPixelRatio(this.pr); this.composer.setSize(w, h);
-    this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.dirty = true;
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    if (!w || !h) return; // kartica je skrivena
+    if (w === this.w && h === this.h && !this.forceResize) return;
+    this.w = w; this.h = h; this.forceResize = false;
+    this.renderer.setSize(w, h, false); this.composer.setSize(w, h); if (this.fast) this.fast.setSize(w, h);
+    this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.needFull = true;
   }
 
   mats(m) {
@@ -275,6 +357,7 @@ export class Viz3D {
       bark: P(T.bark, 1, { rough: 0.95, ns: 1.2 }),
       lamp: new THREE.MeshStandardMaterial({ color: '#fff7e0', emissive: '#ffe9b0', emissiveIntensity: 0.6 }),
     };
+    this.byColor = { fasada: [M.fasada], cokl: [M.cokl], stolarija: [M.frame, M.door], limarija: [M.metal, M.fascia], teren: [M.grass], krov: [] };
     M.leaf = [0, 1, 2].map((k) => P(T.leaf, 1.5, { color: ['#7aa35a', '#6a9550', '#8aae66'][k], rough: 0.9, ns: 0.45 }));
     // makro varijacija boje travnjaka po svijetu (mrlje), da teren ne izgleda kao tapeta
     M.grass.onBeforeCompile = (sh) => {
@@ -284,7 +367,7 @@ export class Viz3D {
     };
     return M;
   }
-  add(mesh, part, minStage = 0, maxStage = 9) { mesh.traverse((o) => { o.castShadow = true; o.receiveShadow = true; }); mesh.userData = { part, minStage, maxStage }; this.root.add(mesh); this.parts.push(mesh); return mesh; }
+  add(mesh, part, minStage = 0, maxStage = 9) { mesh.traverse((o) => { o.castShadow = !o.userData.noShadow; o.receiveShadow = true; }); mesh.userData = { part, minStage, maxStage }; this.root.add(mesh); this.parts.push(mesh); return mesh; }
   box(w, h, d, mat, x, y, z, part, s0, s1) { const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); g.position.set(x, y, z); return this.add(g, part, s0, s1); }
   // greda između dviju točaka (letve, rubni crijep, ograde)
   beam(a, b, w, h, mat, part, s0, s1) { const d = new THREE.Vector3().subVectors(b, a), L = d.length(); const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, L), mat); g.position.copy(a).addScaledVector(d, 0.5); g.lookAt(b); return this.add(g, part, s0, s1); }
@@ -292,8 +375,10 @@ export class Viz3D {
   build(model) {
     this.model = model;
     this.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    (this.oldMats || []).forEach((mt) => { if (mt.map) mt.map.dispose(); if (mt.normalMap) mt.normalMap.dispose(); mt.dispose(); });
     this.root.clear(); this.parts = [];
     const m = model, M = this.M = this.mats(m), E = edges(m), b = bbox(m), [cx, cz] = centroid(m);
+    this.oldMats = Object.values(M).flat();
     seed = 99;
     // teren
     const ground = new THREE.Mesh(new THREE.CircleGeometry(1500, 128), M.grass); ground.rotation.x = -Math.PI / 2; ground.position.set(cx, -0.01, cz); ground.receiveShadow = true; this.root.add(ground);
@@ -338,10 +423,8 @@ export class Viz3D {
     this.landscape(m, b, E, cx, cz);
     this.setStage(this.stage);
     if (!this.viewed) { this.view('persp', true); this.viewed = true; } else this.placeSun(this.camera.position, this.controls.target);
-    this.fitShadow(cx, cz);
-    this.dirty = true;
+    this.invalidateShadows();
   }
-  fitShadow(cx, cz) { this.shadowCenter = new THREE.Vector3(cx, 0, cz); }
 
   landscape(m, b, E, cx, cz) {
     const M = this.M;
@@ -360,34 +443,43 @@ export class Viz3D {
       const gl = this.box(0.08, 0.14, 0.11, M.lamp, lx, 2.2, lz, 'stolarija', 4, 9); gl.rotation.y = lamp.rotation.y; gl.castShadow = false;
     }
     // grmlje uz kuću i živica
-    const bush = (x, z, r, k) => { const geo = this.blob(r, 3, 0.28); const mesh = new THREE.Mesh(geo, M.leaf[k % 3]); mesh.position.set(x, r * 0.55, z); mesh.scale.y = 0.75; this.add(mesh, 'okolis', 5, 9); };
+    const green = new THREE.Group();
+    const bush = (x, z, r, k) => { const mesh = new THREE.Mesh(this.blob(r, 3, 0.28), M.leaf[k % 3]); mesh.position.set(x, r * 0.55, z); mesh.scale.y = 0.75; green.add(mesh); };
     const corners = m.fp; corners.forEach((v, i) => { const [nx, nz] = outward(m, E[i]), [px, pz] = outward(m, E[(i - 1 + E.length) % E.length]); bush(v[0] + (nx + px) * 1.9, v[1] + (nz + pz) * 1.9, 0.55 + rand() * 0.25, i); });
     // živica uz rub parcele (iza kuće)
-    const hedge = (x0, z0, x1, z1) => { const L = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(L / 0.9); for (let i = 0; i <= n; i++) { const t = i / n; const geo = this.blob(0.62, 2, 0.22); const mm = new THREE.Mesh(geo, M.leaf[i % 3]); mm.position.set(x0 + (x1 - x0) * t, 0.75, z0 + (z1 - z0) * t); mm.scale.set(1, 1.3, 1); this.add(mm, 'okolis', 5, 9); } };
+    const hedge = (x0, z0, x1, z1) => { const L = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(L / 0.9); for (let i = 0; i <= n; i++) { const t = i / n; const mm = new THREE.Mesh(this.blob(0.62, 2, 0.22), M.leaf[i % 3]); mm.position.set(x0 + (x1 - x0) * t, 0.75, z0 + (z1 - z0) * t); mm.scale.set(1, 1.3, 1); green.add(mm); } };
     hedge(b.x0 - 10, b.z0 - 15, b.x1 + 10, b.z0 - 15);
+    this.add(mergeMeshes(green), 'okolis', 5, 9);
     // stabla izvan osi pogleda na pročelja i perspektive
     [[-40, 15, 1.25, 0], [40, 16, 1.4, 1], [-140, 16, 1.15, 0], [158, 18, 1.2, 1], [-65, 30, 1.6, 2], [18, 33, 1.7, 0], [106, 32, 1.45, 2], [-112, 29, 1.5, 1], [-160, 34, 1.6, 2], [70, 42, 1.8, 0], [-25, 45, 1.6, 1]]
       .forEach(([a, R, s, k]) => (k === 2 ? this.conifer : this.tree).call(this, cx + R * Math.cos(a * Math.PI / 180), cz + R * Math.sin(a * Math.PI / 180), s));
   }
-  // nepravilna kugla krošnje (šum na verteksima)
+  // nepravilna kugla krošnje (šum na verteksima), s glatkim normalama
   blob(r, detail = 3, amp = 0.25) {
-    const g = new THREE.IcosahedronGeometry(r, detail), p = g.attributes.position, v = new THREE.Vector3(), o = rand() * 100;
-    for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); const n = SN.noise3d(v.x * 1.1 + o, v.y * 1.1, v.z * 1.1) * amp + SN.noise3d(v.x * 3 + o, v.y * 3, v.z * 3) * amp * 0.15; v.multiplyScalar(1 + n); p.setXYZ(i, v.x, v.y, v.z); }
-    g.computeVertexNormals(); return g;
+    const g = new THREE.IcosahedronGeometry(r, detail), p = g.attributes.position, v = new THREE.Vector3(), o = rand() * 100, keys = new Array(p.count);
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i); keys[i] = Math.round(v.x / r * 2000) + '_' + Math.round(v.y / r * 2000) + '_' + Math.round(v.z / r * 2000);
+      const n = SN.noise3d(v.x * 1.1 + o, v.y * 1.1, v.z * 1.1) * amp + SN.noise3d(v.x * 3 + o, v.y * 3, v.z * 3) * amp * 0.15; v.multiplyScalar(1 + n); p.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeVertexNormals();
+    const nr = g.attributes.normal, acc = new Map();
+    for (let i = 0; i < p.count; i++) { const a = acc.get(keys[i]) || [0, 0, 0]; a[0] += nr.getX(i); a[1] += nr.getY(i); a[2] += nr.getZ(i); acc.set(keys[i], a); }
+    for (let i = 0; i < p.count; i++) { const a = acc.get(keys[i]), l = Math.hypot(a[0], a[1], a[2]) || 1; nr.setXYZ(i, a[0] / l, a[1] / l, a[2] / l); }
+    return g;
   }
   tree(x, z, s) {
     const M = this.M, g = new THREE.Group(), h = 2.6 * s;
     const t = new THREE.Mesh(new THREE.CylinderGeometry(0.1 * s, 0.2 * s, h, 10), M.bark); t.position.y = h / 2; g.add(t);
     [[0.5, 0.9, 0.2, -0.6], [-0.4, 0.8, -0.3, 0.7], [0.1, 0.95, 0.5, 0.3]].forEach(([dx, y, dz, rz]) => { const br = new THREE.Mesh(new THREE.CylinderGeometry(0.04 * s, 0.07 * s, 1.1 * s, 6), M.bark); br.position.set(dx * s * 0.5, h * y, dz * s * 0.5); br.rotation.set(dz, 0, rz); g.add(br); });
     const cl = [[0, 3.3, 0, 1.45], [0.85, 2.85, 0.3, 1.05], [-0.75, 2.95, -0.35, 1.1], [0.2, 4.1, -0.2, 1.0], [-0.3, 3.6, 0.7, 0.95], [0.5, 3.7, -0.7, 0.9]];
-    cl.forEach(([a, b2, c, r], i) => { const l = new THREE.Mesh(this.blob(r * s, 4, 0.2), M.leaf[(i + Math.floor(rand() * 3)) % 3]); l.position.set(a * s, b2 * s, c * s); g.add(l); });
-    g.position.set(x, 0, z); g.rotation.y = rand() * 6.28; this.add(g, 'okolis', 5, 9);
+    cl.forEach(([a, b2, c, r], i) => { const l = new THREE.Mesh(this.blob(r * s, 3, 0.2), M.leaf[(i + Math.floor(rand() * 3)) % 3]); l.position.set(a * s, b2 * s, c * s); g.add(l); });
+    const mg = mergeMeshes(g); mg.position.set(x, 0, z); mg.rotation.y = rand() * 6.28; this.add(mg, 'okolis', 5, 9);
   }
   conifer(x, z, s) {
     const M = this.M, g = new THREE.Group();
     const t = new THREE.Mesh(new THREE.CylinderGeometry(0.1 * s, 0.16 * s, 1.4 * s, 8), M.bark); t.position.y = 0.7 * s; g.add(t);
     for (let i = 0; i < 4; i++) { const r = (1.5 - i * 0.32) * s, hh = (1.9 - i * 0.25) * s; const geo = new THREE.ConeGeometry(r, hh, 20, 4); const p = geo.attributes.position, v = new THREE.Vector3(); for (let k = 0; k < p.count; k++) { v.fromBufferAttribute(p, k); const n = 1 + SN.noise3d(v.x * 2, v.y * 2, v.z * 2) * 0.12; p.setXYZ(k, v.x * n, v.y, v.z * n); } geo.computeVertexNormals(); const c = new THREE.Mesh(geo, M.leaf[1]); c.position.y = 1.4 * s + i * 0.95 * s + hh / 2 - 0.3 * s; g.add(c); }
-    g.position.set(x, 0, z); this.add(g, 'okolis', 5, 9);
+    const mg = mergeMeshes(g); mg.position.set(x, 0, z); this.add(mg, 'okolis', 5, 9);
   }
 
   wall(m, e) {
@@ -408,8 +500,9 @@ export class Viz3D {
     let a = 0; const segs = []; cuts.forEach(([c0, c1]) => { if (c0 > a) segs.push([a, c0]); a = Math.max(a, c1); }); if (a < e.L) segs.push([a, e.L]);
     segs.forEach(([s0, s1]) => { const g = new THREE.Mesh(new THREE.BoxGeometry(s1 - s0 + 0.06, m.base, 0.05), M.cokl); g.position.set((s0 + s1) / 2, m.base / 2, -0.025); this.add(place(g), 'fasada', 4, 9); });
     // stolarija s krilima, staklom, unutrašnjošću prostorije i zavjesama
-    ops.forEach((o, oi) => {
-      const grp = new THREE.Group(); const x0 = o.u - o.w / 2, y0 = Math.max(o.s, 0), fw = 0.075, dep = 0.1, inset = 0.13, xm = x0 + o.w / 2;
+    const grp = new THREE.Group();
+    ops.forEach((o) => {
+      const x0 = o.u - o.w / 2, y0 = Math.max(o.s, 0), fw = 0.075, dep = 0.1, inset = 0.13, xm = x0 + o.w / 2;
       const bx = (w, h, d, mat, x, y, z) => { const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); g.position.set(x, y, z); grp.add(g); return g; };
       const fr = (w, h, x, y, z = inset + dep / 2, d = dep) => bx(w, h, d, M.frame, x, y, z);
       // vanjski okvir
@@ -435,10 +528,8 @@ export class Viz3D {
         if (o.s > 0.2) { bx(o.w + 0.08, 0.025, inset + 0.07, M.metal, xm, y0 - 0.012, (inset - 0.07) / 2); bx(o.w + 0.08, 0.06, 0.012, M.metal, xm, y0 - 0.04, -0.064); }
         else bx(o.w, 0.03, 0.3, M.metal, xm, 0.015, 0.05);
       }
-      grp.traverse((c) => { if (c.material !== M.glass && c.material !== M.room && c.material !== M.curtain) { c.castShadow = true; } c.receiveShadow = true; });
-      place(grp); this.add(grp, 'stolarija', 4, 9);
-      grp.traverse((c) => { if (c.material === M.glass || c.material === M.room || c.material === M.curtain) c.castShadow = false; });
     });
+    if (ops.length) this.add(place(mergeMeshes(grp, new Set([M.glass, M.room, M.curtain]))), 'stolarija', 4, 9);
   }
 
   roof(m) {
@@ -467,6 +558,7 @@ export class Viz3D {
     [true, false].forEach((left) => {
       const poly = clip(off, left); if (poly.length < 3) return;
       const tiles = new THREE.MeshStandardMaterial({ color: m.colors.krov, map: this.tex.tiles.map, normalMap: this.tex.tiles.nrm, normalScale: new THREE.Vector2(1.1, 1.1), roughness: 0.72, side: THREE.DoubleSide, envMapIntensity: 0.8 });
+      this.byColor.krov.push(tiles);
       plate(poly, M.osb, 0, 'krov', 3, 3, left);
       plate(poly, tiles, 0.05, 'krov', 4, 9, left);
       // rubni (zabatni) crijep duž kosih rubova
@@ -488,14 +580,15 @@ export class Viz3D {
     // sljemenjak
     const zr = []; off.forEach((p, i) => { const q = off[(i + 1) % n]; if ((p[0] - m.ridgeX) * (q[0] - m.ridgeX) <= 0 && p[0] !== q[0]) zr.push(p[1] + (m.ridgeX - p[0]) / (q[0] - p[0]) * (q[1] - p[1])); });
     if (zr.length >= 2) {
-      const za = Math.min(...zr), zb = Math.max(...zr), ridgeMat = new THREE.MeshStandardMaterial({ color: m.colors.krov, roughness: 0.6 });
+      const za = Math.min(...zr), zb = Math.max(...zr), ridgeMat = new THREE.MeshStandardMaterial({ color: m.colors.krov, roughness: 0.6 }); this.byColor.krov.push(ridgeMat);
       const L = zb - za, k = Math.ceil(L / 0.42);
       for (let i = 0; i < k; i++) { const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.145, L / k - 0.012, 20), ridgeMat); seg.rotation.x = Math.PI / 2; seg.position.set(m.ridgeX, m.ridge + 0.06, za + (i + 0.5) * L / k); this.add(seg, 'krov', 4, 9); }
     }
   }
 
-  setStage(s) { this.stage = s; this.parts.forEach((p) => { const u = p.userData; p.visible = s >= u.minStage && s <= u.maxStage; }); this.dirty = true; }
-  setColors(c) { Object.assign(this.model.colors, c); this.build(this.model); }
+  setStage(s) { this.stage = s; this.parts.forEach((p) => { const u = p.userData; p.visible = s >= u.minStage && s <= u.maxStage; }); this.invalidateShadows(); }
+  // promjena boje mijenja samo materijale (bez ponovne izgradnje modela)
+  setColors(c) { Object.assign(this.model.colors, c); Object.entries(this.byColor).forEach(([k, mats]) => { const v = this.model.colors[k] || DEFAULT_COLORS[k]; mats.forEach((mt) => mt.color.set(v)); }); this.needFull = true; }
   frameBox() { const b = bbox(this.model); return { cx: (b.x0 + b.x1) / 2, cz: (b.z0 + b.z1) / 2, r: Math.max(b.x1 - b.x0, b.z1 - b.z0), h: Math.max(...(this.model.chimneys || []).map((c) => c.top), this.model.ridge) }; }
   // arhitektonska perspektiva: kamera gleda vodoravno (vertikale ostaju ravne)
   view(kind, instant) {
@@ -512,8 +605,8 @@ export class Viz3D {
   }
   anim(pos, tgt, instant) {
     const cam = this.camera, ctl = this.controls, p0 = cam.position.clone(), t0 = ctl.target.clone(), t1 = performance.now();
-    if (instant || matchMedia('(prefers-reduced-motion: reduce)').matches) { cam.position.copy(pos); ctl.target.copy(tgt); ctl.update(); this.dirty = true; return; }
-    const step = () => { const k = Math.min(1, (performance.now() - t1) / 750), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; cam.position.lerpVectors(p0, pos, e); ctl.target.lerpVectors(t0, tgt, e); this.dirty = true; if (k < 1) requestAnimationFrame(step); };
+    if (instant || matchMedia('(prefers-reduced-motion: reduce)').matches) { cam.position.copy(pos); ctl.target.copy(tgt); ctl.update(); this.needFull = true; return; }
+    const step = () => { const k = Math.min(1, (performance.now() - t1) / 750), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; cam.position.lerpVectors(p0, pos, e); ctl.target.lerpVectors(t0, tgt, e); this.needFast = true; if (k < 1) requestAnimationFrame(step); };
     step();
   }
   pick(e) {
@@ -537,7 +630,7 @@ export class Viz3D {
     c2.render();
     const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.drawImage(r.domElement, 0, 0, w, h);
     c2.dispose?.(); rt.dispose(); ao.dispose?.(); ss.dispose?.();
-    cam.aspect = oldAspect; cam.updateProjectionMatrix(); r.setPixelRatio(this.pr); this.resize();
+    cam.aspect = oldAspect; cam.updateProjectionMatrix(); r.setPixelRatio(this.pr); this.forceResize = true; this.resize();
     if (caption) {
       const lines = caption.split('\n'), fs = Math.round(h / 44), pad = Math.round(h / 38), lh = fs * 1.4;
       g.font = `600 ${fs}px "IBM Plex Sans", Arial`; const bw = Math.max(...lines.map((l) => g.measureText(l).width)) + pad * 2;

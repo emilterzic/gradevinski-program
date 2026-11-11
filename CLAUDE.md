@@ -13,3 +13,8 @@
   `phases[]`, `meta{}` (podaci za ugovor), `contract{html, edited}`, `chat[]`.
 - GDPR/Data Act: podaci po korisniku privatni; izvoz cijelog projekta u JSON mora uvijek raditi.
 - Prije objave provjeriti: `node --check web/app.js`.
+- 3D brzina (v0.4): sjene se osvježavaju samo na zahtjev (`invalidateShadows()`), mreže se spajaju po materijalu
+  (`mergeMeshes`), boje se mijenjaju preko `setColors()` bez ponovne izgradnje. Dok se model miče crta se brza
+  slika (okluzija u pola rezolucije; na sporim računalima i niža rezolucija), a 140 ms nakon mirovanja puna kvaliteta.
+  Novi dijelovi scene moraju pozvati `invalidateShadows()` ili postaviti `needFull`.
+- Nacrt se crta u točnim fizičkim pikselima (`pdfSizes`), izvan ekrana, pa se zamijeni; ne vraćati `Math.floor` skaliranje.
