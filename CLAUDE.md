@@ -55,3 +55,5 @@
 - Testovi (v0.12): prije objave pokrenuti i `node tests/model.test.mjs` (stvarna zgrada u `tests/fixtures/`, mjere ručno
   očitane s nacrta). Svaki novi stvarni projekt koji vlasnik odobri dodaje se kao novi fixture s očekivanim modelom.
   AI čitanje se uživo provjerava kroz dnevnik `ailog_<projekt>` u bazi, ne čitanjem cijelog projekta.
+- Kota poda (v0.13): `modelSpec.z0` = visinska kota poda najdonje etaže modela; `modelFromAi` i `fitParts` od parapeta otvora
+  (zadanih od ±0,00) oduzimaju `z0`. Popravak visine podnožja iz pročelja (`visinaPodnozja`) je u `aiBuildModel` prije slaganja.

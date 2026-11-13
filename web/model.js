@@ -135,7 +135,7 @@ export function normSpec(a) {
     const ins = i > 0 ? p.inset || {} : null, n0 = (v) => (isFinite(+v) && +v > 0 ? rd(Math.min(40, +v)) : 0);
     return { name: String(p.name || (i ? 'Gornji dio ' + i : 'Podnožje')).slice(0, 40), floors, heights, inset: ins ? { g: n0(ins.g), d: n0(ins.d), dl: n0(ins.dl), l: n0(ins.l) } : null, ...(i > 0 && p.insetAi ? { insetAi: p.insetAi } : {}), ...(i > 0 && normShape(p.shape) ? { shape: normShape(p.shape) } : {}), ...(normBalc(p.balconies).length ? { balconies: normBalc(p.balconies) } : {}) };
   });
-  return { fp: cleanPoly(a.fp), roof, ridgeDir: a.ridgeDir === 'x' ? 'x' : 'z', ridgeH: isFinite(+a.ridgeH) ? +a.ridgeH : null, ov: isFinite(+a.ov) && a.ov != null ? Math.min(1.5, Math.max(0, +a.ov)) : 0.5, parts, facades: Array.isArray(a.facades) ? a.facades : [], ...(a.res ? { res: a.res } : {}) };
+  return { fp: cleanPoly(a.fp), roof, ridgeDir: a.ridgeDir === 'x' ? 'x' : 'z', ridgeH: isFinite(+a.ridgeH) ? +a.ridgeH : null, ov: isFinite(+a.ov) && a.ov != null ? Math.min(1.5, Math.max(0, +a.ov)) : 0.5, parts, facades: Array.isArray(a.facades) ? a.facades : [], ...(a.res ? { res: a.res } : {}), ...(isFinite(+a.z0) && +a.z0 ? { z0: +a.z0 } : {}) };
 }
 // oblik gornjeg dijela: poligon u udjelima (0–1) njegova pravokutnika, rastegnut tako da dodiruje sve četiri strane
 function normShape(sh) {
@@ -235,7 +235,7 @@ function assembleAi(a0) {
     (Array.isArray(f.openings) ? f.openings : []).forEach((o) => {
       const x = Math.min(1, Math.max(0, +o.x)); if (!isFinite(x)) return;
       const t = o.t === 'vrata' ? 'door' : o.t === 'klizna' ? 'slide' : 'win', wide = t === 'slide' && +o.w > 6; // izlog: široka ostakljena stijena, dijeli se na polja
-      const w = Math.min(wide ? 30 : 8, Math.max(0.4, +o.w > 0 ? +o.w : 1.2)), c0 = lo + (inc ? x : 1 - x) * span, sAbs = Math.max(0, isFinite(+o.s) ? +o.s : 0.9);
+      const w = Math.min(wide ? 30 : 8, Math.max(0.4, +o.w > 0 ? +o.w : 1.2)), c0 = lo + (inc ? x : 1 - x) * span, sAbs = Math.max(0, isFinite(+o.s) ? +o.s - (a.z0 || 0) : 0.9);
       const g = geo.slice().reverse().find((q) => q.v.y0 <= sAbs + 0.3) || geo[0], v = g.v;
       // očitanje položaja nije točno u centimetar: otvor koji do 1 m viri preko ruba zida pomiče se unutra
       const fitC = (e) => { const a0 = horiz ? e.p[0] : e.p[1], a1 = horiz ? e.q[0] : e.q[1], mn = Math.min(a0, a1) + w / 2 + 0.2, mx = Math.max(a0, a1) - w / 2 - 0.2; return mx < mn || c0 < mn - 1 || c0 > mx + 1 ? null : Math.min(mx, Math.max(mn, c0)); };
@@ -305,7 +305,7 @@ function fitParts(sp) {
         const u = (Array.isArray(f.upper) ? f.upper : []).find((q) => +q.part === i + 1 && +q.x1 - +q.x0 > 0.03);
         if (u) { const [, lo, hi] = spanOnPlan(f.side, b, Math.max(0, +u.x0), Math.min(1, +u.x1)); expl.push([lo, hi]); }
         for (const o of Array.isArray(f.openings) ? f.openings : []) {
-          const s = +o.s, x = +o.x; if (!isFinite(s) || !isFinite(x) || s < y0 - 0.3 || s >= y1 - 0.3) continue;
+          const s = +o.s - (sp.z0 || 0), x = +o.x; if (!isFinite(s) || !isFinite(x) || s < y0 - 0.3 || s >= y1 - 0.3) continue;
           const w = Math.min(o.t === 'klizna' && +o.w > 6 ? 30 : 8, Math.max(0.4, +o.w > 0 ? +o.w : 1.2)), [, c] = spanOnPlan(f.side, b, x, x);
           cov = cov ? [Math.min(cov[0], c - w / 2), Math.max(cov[1], c + w / 2)] : [c - w / 2, c + w / 2];
         }
