@@ -43,6 +43,7 @@
   `volsOf(m)`, `levelsOf(v)`, `floorsAll(m)`, `topOf(m)`; krov iz odabira nosi najgornji dio, niži imaju ravni krov (terasu).
   U 3D-u se gornji dio gradi u grupi `this.cur` podignutoj na `y0`. Stari AI modeli bez `modelSpec` idu preko `modelBase`.
 - Usklađivanje (v0.10): pročelja u `modelSpec.facades[]` nose {side, sideAi, name, width, upper[{part,x0,x1}], openings[]};
-  `MD.resolveSpec(spec)` bira strane pročelja i položaj gornjih dijelova (bodovi: AI očitanje, širina pročelja, otvori na zidovima,
-  strane svijeta u krug) i postavlja `spec.res`. Zove se samo nakon AI čitanja i u migraciji 8, nikad nakon ručne izmjene.
+  `MD.resolveSpec(spec)` bira strane pročelja i položaj gornjih dijelova (bodovi: AI očitanje, širina pročelja, otvori na zidovima;
+  strane svijeta u nazivima samo kao blaga prednost, nikad kao uvjet) i postavlja `spec.res = 2`; izvorno očitana uvlaka ostaje
+  u `parts[i].insetAi`. Zove se samo nakon AI čitanja i u migraciji 9, nikad nakon ručne izmjene.
   Ručno: `setObjekt(null, { parts, sides })`.

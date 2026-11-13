@@ -35,9 +35,9 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   u „Objekt i dimenzije” svaki se dio ručno ispravlja (etaže, visine, uvlake) ili dodaje. Količine, terasa nižeg dijela
   i statika računaju se po dijelovima.
 - **Usklađivanje nacrta** (v0.10): AI zna zamijeniti strane pročelja ili položaj gornjeg dijela. `MD.resolveSpec` zato
-  provjerava da se nacrti međusobno slažu: strane svijeta iz naziva pročelja idu u krug, nacrtana širina pročelja mora
-  odgovarati širini ili dubini tlocrta, a prozori i izlozi moraju pasti na stvarne zidove. Veličina gornjeg dijela uzima
-  se s tlocrta, položaj s pročelja. Što je ispravljeno piše u poruci, a strane pročelja i uvlake korisnik mijenja ručno.
+  provjerava da se nacrti međusobno slažu: nacrtana širina pročelja mora odgovarati širini ili dubini tlocrta, a prozori i izlozi moraju
+  pasti na stvarne zidove; strane svijeta u nazivima pročelja su samo blaga prednost jer se nazivi znaju krivo pročitati.
+  Veličina gornjeg dijela uzima se s tlocrta, položaj s pročelja. Što je ispravljeno piše u poruci, a strane pročelja i uvlake korisnik mijenja ručno.
   Izlozi širi od 6 m crtaju se u punoj širini (polja po 4 m), ostakljenje preko više etaža kao polja jedno iznad drugog.
 - **Objekt i dimenzije** (v0.6): vrsta objekta (po nacrtu, prizemnica, obiteljska kuća P+1, manja stambena zgrada P+2,
   stambena zgrada P+4) sa standardnim polaznim dimenzijama i uobičajenom izvedbom; širina, dubina, broj etaža, visina

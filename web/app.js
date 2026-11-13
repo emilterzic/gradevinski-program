@@ -252,10 +252,10 @@ function migrate(p) {
     // okvirnu kuću koju je program prije sam stvorio (bez nacrta i bez tvojih dimenzija) uklanjam: nije bila iz nacrta
     if (p.model?.src === 'auto' && !p.modelDims && !p.buildLinked && p.docs.some((d) => !d.demo)) { p.model = null; p.modelType = null; p.chat.push({ role: 'assistant', content: 'Ispravak: 3D prikaz je za ovaj projekt pokazivao okvirnu kuću koja nije bila iz tvojih nacrta. Uklonio sam je. U kartici 3D prikaz sada možeš pokrenuti „AI: složi 3D model iz nacrta” (čita tlocrt, presjek i pročelja) ili zadati vrstu objekta i dimenzije.' }); }
   }
-  if ((p.mig || 0) < 8) {
-    // v0.10: pročelja AI modela se usklađuju (strane svijeta idu u krug, otvori moraju pasti na zidove), izlozi su u punoj širini
-    p.mig = 8;
-    if (p.modelType === 'ai' && p.modelSpec && !p.modelSpec.res) {
+  if ((p.mig || 0) < 9) {
+    // v0.10: pročelja AI modela se usklađuju (nacrtana širina pročelja, otvori moraju pasti na zidove), izlozi su u punoj širini
+    p.mig = 9;
+    if (p.modelType === 'ai' && p.modelSpec && p.modelSpec.res !== 2) {
       try {
         const r = MD.resolveSpec(p.modelSpec), nm = MD.modelFromAi(r.spec); if (p.model?.colors) nm.colors = p.model.colors;
         p.modelSpec = r.spec; p.model = nm; p.relink = true;

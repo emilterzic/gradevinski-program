@@ -133,7 +133,7 @@ export function normSpec(a) {
     if (!h && !hs.length && +p.wallTop > 0) h = Math.min(9, Math.max(2.4, (+p.wallTop - (roof === 'flat' ? 0.6 : 0.2)) / floors));
     const heights = Array.from({ length: floors }, (_, f) => rd(hs[f] ?? hs[hs.length - 1] ?? h ?? 2.9) || 2.9);
     const ins = i > 0 ? p.inset || {} : null, n0 = (v) => (isFinite(+v) && +v > 0 ? rd(Math.min(40, +v)) : 0);
-    return { name: String(p.name || (i ? 'Gornji dio ' + i : 'Podnožje')).slice(0, 40), floors, heights, inset: ins ? { g: n0(ins.g), d: n0(ins.d), dl: n0(ins.dl), l: n0(ins.l) } : null };
+    return { name: String(p.name || (i ? 'Gornji dio ' + i : 'Podnožje')).slice(0, 40), floors, heights, inset: ins ? { g: n0(ins.g), d: n0(ins.d), dl: n0(ins.dl), l: n0(ins.l) } : null, ...(i > 0 && p.insetAi ? { insetAi: p.insetAi } : {}) };
   });
   return { fp: cleanPoly(a.fp), roof, ridgeDir: a.ridgeDir === 'x' ? 'x' : 'z', ridgeH: isFinite(+a.ridgeH) ? +a.ridgeH : null, ov: isFinite(+a.ov) && a.ov != null ? Math.min(1.5, Math.max(0, +a.ov)) : 0.5, parts, facades: Array.isArray(a.facades) ? a.facades : [], ...(a.res ? { res: a.res } : {}) };
 }
@@ -238,7 +238,7 @@ function fitParts(sp) {
   let moved = 0, y0 = 0;
   for (let i = 1; i < parts.length; i++) {
     y0 += sp.parts[i - 1].heights.reduce((s, h) => s + h, 0);
-    const y1 = y0 + sp.parts[i].heights.reduce((s, h) => s + h, 0), par = rects[i - 1], n = sp.parts[i].inset || {}, rect = {};
+    const y1 = y0 + sp.parts[i].heights.reduce((s, h) => s + h, 0), par = rects[i - 1], n = sp.parts[i].insetAi || sp.parts[i].inset || {}, rect = {};
     for (const ax of ['x', 'z']) {
       const dim = par[ax][1] - par[ax][0], plan = ax === 'x' ? [par.x[0] + (n.l || 0), par.x[1] - (n.d || 0)] : [par.z[0] + (n.g || 0), par.z[1] - (n.dl || 0)];
       if (plan[1] - plan[0] < 3) plan[1] = Math.min(par[ax][1], plan[0] + 3);
@@ -253,18 +253,20 @@ function fitParts(sp) {
           cov = cov ? [Math.min(cov[0], c - w / 2), Math.max(cov[1], c + w / 2)] : [c - w / 2, c + w / 2];
         }
       }
-      let [lo, hi] = plan; const size = hi - lo;
+      let [lo, hi] = plan; const size = hi - lo, tol = Math.max(1.5, 0.08 * dim), snap = 0.03 * dim + 0.5;
       if (expl.length) {
-        lo = expl.reduce((s, e) => s + e[0], 0) / expl.length; hi = expl.reduce((s, e) => s + e[1], 0) / expl.length;
-        if (Math.abs(hi - lo - size) <= Math.max(1.5, 0.08 * dim)) { const c = (lo + hi) / 2; lo = c - size / 2; hi = c + size / 2; } // mjera s tlocrta (kote) je točnija
+        // obris na pročelju uključuje istake i balkone: glavni volumen s tlocrta ostaje ako stane u njega, inače se premješta
+        const s0 = expl.reduce((s, e) => s + e[0], 0) / expl.length, s1 = expl.reduce((s, e) => s + e[1], 0) / expl.length;
+        if (size > dim - 0.3 || size > s1 - s0 + tol) { lo = s0; hi = s1; if (Math.abs(lo - par[ax][0]) < snap) lo = par[ax][0]; if (Math.abs(hi - par[ax][1]) < snap) hi = par[ax][1]; }
+        else if (lo < s0 - tol || hi > s1 + tol) {
+          if (Math.abs(s0 - par[ax][0]) < snap && Math.abs(s1 - par[ax][1]) >= snap) { lo = par[ax][0]; hi = lo + size; } else if (Math.abs(s1 - par[ax][1]) < snap) { hi = par[ax][1]; lo = hi - size; } else if (Math.abs(s0 - par[ax][0]) < snap) { lo = par[ax][0]; hi = lo + size; } else { lo = (s0 + s1 - size) / 2; hi = lo + size; }
+        }
       } else if (cov && (cov[0] < lo - 0.2 || cov[1] > hi + 0.2)) {
         const sh = cov[1] + 0.3 > hi ? cov[1] + 0.3 - hi : cov[0] - 0.3 - lo; lo += sh; hi += sh;
         lo = Math.min(lo, cov[0] - 0.3); hi = Math.max(hi, cov[1] + 0.3);
-      }
-      if (lo !== plan[0] || hi !== plan[1]) { // pomaknuti dio se poravnava s rubom donjeg dijela ako mu je blizu
-        const snap = 0.03 * dim + 0.5, dHi = par[ax][1] - hi, dLo = par[ax][0] - lo;
+        const dHi = par[ax][1] - hi, dLo = par[ax][0] - lo; // pomaknuti dio se poravnava s rubom donjeg dijela ako mu je blizu
         if (Math.abs(dHi) < snap && Math.abs(dHi) <= Math.abs(dLo)) { lo += dHi; hi += dHi; } else if (Math.abs(dLo) < snap) { lo += dLo; hi += dLo; }
-        if (cov) { lo = Math.min(lo, cov[0] - 0.1); hi = Math.max(hi, cov[1] + 0.1); }
+        lo = Math.min(lo, cov[0] - 0.1); hi = Math.max(hi, cov[1] + 0.1);
       }
       lo = Math.max(par[ax][0], lo); hi = Math.min(par[ax][1], hi); if (hi - lo < 3) { lo = plan[0]; hi = plan[1]; }
       moved += Math.abs((lo + hi) - (plan[0] + plan[1])) / 2 / dim; rect[ax] = [lo, hi];
@@ -280,7 +282,7 @@ function fitParts(sp) {
 export function resolveSpec(spec0) {
   const sp = normSpecKeep(spec0), b = bbox({ fp: sp.fp }), W = b.x1 - b.x0, D = b.z1 - b.z0, notes = [];
   const F = sp.facades = sp.facades.map((f) => ({ ...f, sideAi: f.sideAi !== undefined ? f.sideAi : SIDES.includes(f.side) ? f.side : null }));
-  sp.res = 1;
+  sp.parts = sp.parts.map((p) => (p.inset ? { ...p, insetAi: p.insetAi || { ...p.inset } } : p)); sp.res = 2;
   if (!F.length) return { spec: sp, notes, changed: false };
   const groups = [];
   F.forEach((f, i) => { const ang = compassOf(f.name), k = ang != null ? 'c' + ang : f.name ? 'n' + String(f.name).trim().toUpperCase() : 'i' + i; let g = groups.find((q) => q.k === k); if (!g) groups.push(g = { k, ang, ix: [] }); g.ix.push(i); });
@@ -288,12 +290,13 @@ export function resolveSpec(spec0) {
   if (groups.length <= 4) {
     let cands = []; const rec = (as) => { if (as.length === groups.length) return cands.push(as); for (let k = 0; k < 4; k++) if (!as.includes(k)) rec([...as, k]); }; rec([]);
     const okC = (as) => groups.every((g, i) => groups.every((h, j) => { if (j <= i || g.ang == null || h.ang == null) return true; const da = ((h.ang - g.ang) % 360 + 360) % 360; return da % 90 ? true : ((as[j] - as[i]) % 4 + 4) % 4 === da / 90; }));
-    const cc = cands.filter(okC); if (cc.length) cands = cc;
+    const nComp = groups.filter((g) => g.ang != null).length;
     const skew = Math.abs(W - D) / Math.max(W, D) > 0.15;
     for (const as of cands) {
       const fac = F.map((f) => ({ ...f })); groups.forEach((g, gi) => g.ix.forEach((i) => { fac[i].side = SIDES[as[gi]]; }));
       const fit = fitParts({ ...sp, facades: fac }), trial = { ...sp, parts: fit.parts, facades: fac };
-      let score = -0.5 * assembleAi(trial).dropped - Math.min(1, fit.moved);
+      // nazivi pročelja (strane svijeta) znaju biti krivo pročitani, pa su samo blaga prednost; mjere i otvori odlučuju
+      let score = -0.5 * assembleAi(trial).dropped - Math.min(1, fit.moved) + (nComp > 1 && okC(as) ? 1 : 0);
       const cg = groups.map((g, gi) => (g.ang == null ? null : Math.cos((g.ang - 90 * as[gi]) * Math.PI / 180))).filter((v) => v != null);
       if (cg.length) score += 0.3 * cg.reduce((x, y) => x + y, 0) / cg.length; // bez drugih dokaza: sjever je na nacrtu najčešće gore
       for (const f of fac) {
@@ -306,11 +309,11 @@ export function resolveSpec(spec0) {
     }
   }
   if (!best) { const fit = fitParts(sp); best = { trial: { ...sp, parts: fit.parts } }; }
-  const out = normSpecKeep({ ...best.trial, res: 1 }), fq = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+  const out = normSpecKeep({ ...best.trial, res: 2 }), fq = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
   const ch = out.facades.filter((f) => f.sideAi && f.side !== f.sideAi);
-  if (ch.length) notes.push(`strane pročelja uskladio sam po stranama svijeta i položaju otvora: ${out.facades.map((f) => `${f.name || 'pročelje'} → ${f.side}`).join(', ')} (AI je za ${ch.map((f) => `${f.name || 'pročelje'} pročitao „${f.sideAi}”`).join(', ')})`);
+  if (ch.length) notes.push(`strane pročelja uskladio sam po nacrtanoj širini pročelja i položaju otvora: ${out.facades.map((f) => `${f.name || 'pročelje'} → ${f.side}`).join(', ')} (AI je za ${ch.map((f) => `${f.name || 'pročelje'} pročitao „${f.sideAi}”`).join(', ')})`);
   let insCh = false;
-  out.parts.forEach((p, i) => { const a = sp.parts[i].inset; if (!a || !p.inset) return; if (['g', 'd', 'dl', 'l'].some((k) => Math.abs(p.inset[k] - a[k]) > 0.3)) { insCh = true; notes.push(`položaj dijela „${p.name}” uskladio sam s pročeljima: uvučeno gore ${fq(p.inset.g)} · desno ${fq(p.inset.d)} · dolje ${fq(p.inset.dl)} · lijevo ${fq(p.inset.l)} m (s tlocrta je bilo pročitano gore ${fq(a.g)} · desno ${fq(a.d)} · dolje ${fq(a.dl)} · lijevo ${fq(a.l)} m)`); } });
+  out.parts.forEach((p, i) => { const a = sp.parts[i].insetAi || sp.parts[i].inset; if (!a || !p.inset) return; if (['g', 'd', 'dl', 'l'].some((k) => Math.abs(p.inset[k] - a[k]) > 0.3)) { insCh = true; notes.push(`položaj dijela „${p.name}” uskladio sam s pročeljima: uvučeno gore ${fq(p.inset.g)} · desno ${fq(p.inset.d)} · dolje ${fq(p.inset.dl)} · lijevo ${fq(p.inset.l)} m (prije usklađivanja: gore ${fq(a.g)} · desno ${fq(a.d)} · dolje ${fq(a.dl)} · lijevo ${fq(a.l)} m)`); } });
   const sideCh = out.facades.some((f, i) => f.side !== spec0.facades?.[i]?.side), insIn = out.parts.some((p, i) => p.inset && ['g', 'd', 'dl', 'l'].some((k) => Math.abs(p.inset[k] - (+spec0.parts?.[i]?.inset?.[k] || 0)) > 0.3));
   return { spec: out, notes, changed: sideCh || insIn };
 }
