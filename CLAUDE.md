@@ -57,3 +57,5 @@
   AI čitanje se uživo provjerava kroz dnevnik `ailog_<projekt>` u bazi, ne čitanjem cijelog projekta.
 - Kota poda (v0.13): `modelSpec.z0` = visinska kota poda najdonje etaže modela; `modelFromAi` i `fitParts` od parapeta otvora
   (zadanih od ±0,00) oduzimaju `z0`. Popravak visine podnožja iz pročelja (`visinaPodnozja`) je u `aiBuildModel` prije slaganja.
+- Usklađivanje (v0.14): `resolveSpec` postavlja `res = 3`; proturječje s položajem s tlocrta (`fitParts().contra`) nosi −2,5 boda po osi.
+  `P.specManual = true` nakon ručne izmjene dijelova ili strana: migracije i usklađivanje takav model ne mijenjaju. Migracija 10.

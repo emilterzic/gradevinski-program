@@ -26,6 +26,12 @@ const bad = JSON.parse(JSON.stringify(spec)); bad.facades.forEach((f) => { f.sid
 const rb = MD.resolveSpec(bad);
 assert.deepEqual(rb.spec.facades.map((f) => f.side), ['dolje', 'lijevo', 'desno', 'gore']);
 assert.deepEqual(rb.spec.parts[1].inset, { g: 0, d: 23.4, dl: 8.15, l: 0 });
+// stvarni slučaj (13. 11.): AI je kraća pročelja zamijenio (JI = desno, SI = lijevo), a tlocrt kata točno pročitao.
+// Položaj s tlocrta mora pobijediti: gornji dio ostaje uz gornji rub, a strane se ispravljaju.
+const mir = JSON.parse(JSON.stringify(spec)); mir.facades[1].side = 'desno'; mir.facades[2].side = 'lijevo';
+const rm = MD.resolveSpec(mir);
+assert.deepEqual(rm.spec.facades.map((f) => f.side), ['dolje', 'lijevo', 'desno', 'gore']);
+assert.deepEqual(rm.spec.parts[1].inset, { g: 0, d: 23.4, dl: 8.15, l: 0 });
 // tlocrt kata → oblik i balkoni
 const k = MD.katToPart([[5, 3], [28.9, 3], [28.9, 13.85], [5, 13.85]], [{ box: [8.65, 13.85, 12.8, 16.25], rail: 'metal' }]);
 assert.equal(k.W, 23.9); assert.equal(k.shape, null); assert.equal(k.balconies[0].side, 'dolje'); assert.ok(Math.abs(k.balconies[0].d - 2.4) < 0.01);

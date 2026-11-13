@@ -1,4 +1,4 @@
-// Građevinski program – prototip v0.13
+// Građevinski program – prototip v0.14
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -207,7 +207,7 @@ async function openProject(id) {
   try { localStorage.setItem('gp.last', P.id); } catch {}
   setSave(cap.db ? 'Spremljeno u oblak' : 'Spremljeno u ovom pregledniku');
   await loadPdfForProject();
-  if (P.mig !== mig0) { if (P.relink) { delete P.relink; if (P.buildLinked && P.model) applySlots(MD.ALL_SLOTS); } touch(); }
+  if (P.mig !== mig0) { if (P.relink) { delete P.relink; if (P.buildLinked && P.model) applySlots(MD.ALL_SLOTS); if (P.modelSpec) aiReadLog({ ok: true, msg: 'migracija: ' + (P.chat[P.chat.length - 1]?.content || '').slice(0, 600), parts: P.modelSpec.parts.map((q) => ({ name: q.name, inset: q.inset, insetAi: q.insetAi })), sides: P.modelSpec.facades.map((f) => ({ n: f.name, side: f.side, ai: f.sideAi })), vols: MD.volsOf(P.model).map((v) => ({ fp: v.fp, ops: v.openings.length, bk: (v.balconies || []).length })) }); } touch(); }
   renderAll();
 }
 // aktivni dokument projekta: P.pdf i P.pageScale uvijek pokazuju na njega
@@ -252,10 +252,10 @@ function migrate(p) {
     // okvirnu kuću koju je program prije sam stvorio (bez nacrta i bez tvojih dimenzija) uklanjam: nije bila iz nacrta
     if (p.model?.src === 'auto' && !p.modelDims && !p.buildLinked && p.docs.some((d) => !d.demo)) { p.model = null; p.modelType = null; p.chat.push({ role: 'assistant', content: 'Ispravak: 3D prikaz je za ovaj projekt pokazivao okvirnu kuću koja nije bila iz tvojih nacrta. Uklonio sam je. U kartici 3D prikaz sada možeš pokrenuti „AI: složi 3D model iz nacrta” (čita tlocrt, presjek i pročelja) ili zadati vrstu objekta i dimenzije.' }); }
   }
-  if ((p.mig || 0) < 9) {
+  if ((p.mig || 0) < 10) {
     // v0.10: pročelja AI modela se usklađuju (nacrtana širina pročelja, otvori moraju pasti na zidove), izlozi su u punoj širini
-    p.mig = 9;
-    if (p.modelType === 'ai' && p.modelSpec && p.modelSpec.res !== 2) {
+    p.mig = 10;
+    if (p.modelType === 'ai' && p.modelSpec && p.modelSpec.res !== 3 && !p.specManual) {
       try {
         const r = MD.resolveSpec(p.modelSpec), nm = MD.modelFromAi(r.spec); if (p.model?.colors) nm.colors = p.model.colors;
         p.modelSpec = r.spec; p.model = nm; p.relink = true;
@@ -1040,7 +1040,7 @@ function setObjekt(type, dims) {
   if (T) P.modelType = T.id; else P.modelType ||= 'kuca';
   if (P.modelType === 'ai' && P.modelSpec) {
     // model iz nacrta (AI): mjere i dijelovi se mijenjaju na specifikaciji, a model i otvori se slažu iznova
-    P.modelSpec = MD.specWithDims(P.modelSpec, dims || {}); P.modelDims = undefined;
+    P.modelSpec = MD.specWithDims(P.modelSpec, dims || {}); P.modelDims = undefined; if (dims && (dims.parts || dims.sides)) P.specManual = true; // ručno ispravljeno: usklađivanje to više ne dira
     const nm = MD.modelFromAi(P.modelSpec); if (P.model?.colors) nm.colors = P.model.colors;
     P.model = nm; MD.applyBuild(P.model, P.build); setBuild({ krovOblik: P.modelSpec.roof }, true);
     const n = P.buildLinked ? applySlots(MD.ALL_SLOTS) : 0; touch(); return n;
@@ -1331,7 +1331,7 @@ async function aiBuildModel() {
     const spec = res.spec, base = MD.modelFromAi(spec);
     pushUndo();
     if (P.model?.colors) base.colors = P.model.colors;
-    P.modelSpec = spec; P.modelBase = undefined; P.modelType = 'ai'; P.modelDims = undefined; P.model = base; MD.applyBuild(P.model, P.build);
+    P.modelSpec = spec; P.specManual = undefined; P.modelBase = undefined; P.modelType = 'ai'; P.modelDims = undefined; P.model = base; MD.applyBuild(P.model, P.build);
     // veća zgrada ili visoke etaže: zidana izvedba ne prolazi osnovna pravila, pa predlažem armirani beton i temeljnu ploču
     const nFl = MD.floorsAll(base), tall = nFl >= 4 || MD.quantities(base).hMax > 4;
     setBuild({ krovOblik: spec.roof, ...(tall && P.build.konstrukcija !== 'skelet' ? { konstrukcija: 'ab', temelji: 'ploca' } : {}) }, true);

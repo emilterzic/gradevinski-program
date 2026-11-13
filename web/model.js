@@ -292,7 +292,7 @@ function spanOnPlan(side, b, x0, x1) {
 // (izričito: f.upper [{part, x0, x1}], ili posredno: prozori gornjih etaža moraju pasti na njegov zid).
 function fitParts(sp) {
   const b = bbox({ fp: sp.fp }), rects = [{ x: [b.x0, b.x1], z: [b.z0, b.z1] }], parts = sp.parts.map((p) => ({ ...p })), r5 = (v) => Math.round(v * 20) / 20;
-  let moved = 0, y0 = 0;
+  let moved = 0, contra = 0, y0 = 0;
   for (let i = 1; i < parts.length; i++) {
     y0 += sp.parts[i - 1].heights.reduce((s, h) => s + h, 0);
     const y1 = y0 + sp.parts[i].heights.reduce((s, h) => s + h, 0), par = rects[i - 1], n = sp.parts[i].insetAi || sp.parts[i].inset || {}, rect = {};
@@ -326,12 +326,12 @@ function fitParts(sp) {
         lo = Math.min(lo, cov[0] - 0.1); hi = Math.max(hi, cov[1] + 0.1);
       }
       lo = Math.max(par[ax][0], lo); hi = Math.min(par[ax][1], hi); if (hi - lo < 3) { lo = plan[0]; hi = plan[1]; }
-      moved += Math.abs((lo + hi) - (plan[0] + plan[1])) / 2 / dim; rect[ax] = [lo, hi];
+      moved += Math.abs((lo + hi) - (plan[0] + plan[1])) / 2 / dim; if (Math.abs(lo - plan[0]) > 0.5 || Math.abs(hi - plan[1]) > 0.5) contra++; rect[ax] = [lo, hi];
     }
     rects.push(rect);
     parts[i].inset = { g: r5(rect.z[0] - par.z[0]), d: r5(par.x[1] - rect.x[1]), dl: r5(par.z[1] - rect.z[1]), l: r5(rect.x[0] - par.x[0]) };
   }
-  return { parts, moved };
+  return { parts, moved, contra };
 }
 // Usklađuje strane pročelja i položaj gornjih dijelova tako da se nacrti međusobno slažu:
 // strane svijeta u nazivima idu u krug (SI → JI → JZ → SZ), nacrtana širina pročelja odgovara širini ili dubini tlocrta,
@@ -339,7 +339,7 @@ function fitParts(sp) {
 export function resolveSpec(spec0) {
   const sp = normSpecKeep(spec0), b = bbox({ fp: sp.fp }), W = b.x1 - b.x0, D = b.z1 - b.z0, notes = [];
   const F = sp.facades = sp.facades.map((f) => ({ ...f, sideAi: f.sideAi !== undefined ? f.sideAi : SIDES.includes(f.side) ? f.side : null }));
-  sp.parts = sp.parts.map((p) => (p.inset ? { ...p, insetAi: p.insetAi || { ...p.inset } } : p)); sp.res = 2;
+  sp.parts = sp.parts.map((p) => (p.inset ? { ...p, insetAi: p.insetAi || { ...p.inset } } : p)); sp.res = 3;
   if (!F.length) return { spec: sp, notes, changed: false };
   const groups = [];
   F.forEach((f, i) => { const ang = compassOf(f.name), k = ang != null ? 'c' + ang : f.name ? 'n' + String(f.name).trim().toUpperCase() : 'i' + i; let g = groups.find((q) => q.k === k); if (!g) groups.push(g = { k, ang, ix: [] }); g.ix.push(i); });
@@ -353,7 +353,8 @@ export function resolveSpec(spec0) {
       const fac = F.map((f) => ({ ...f })); groups.forEach((g, gi) => g.ix.forEach((i) => { fac[i].side = SIDES[as[gi]]; }));
       const fit = fitParts({ ...sp, facades: fac }), trial = { ...sp, parts: fit.parts, facades: fac };
       // nazivi pročelja (strane svijeta) znaju biti krivo pročitani, pa su samo blaga prednost; mjere i otvori odlučuju
-      let score = -0.5 * assembleAi(trial).dropped - Math.min(1, fit.moved) + (nComp > 1 && okC(as) ? 1 : 0);
+      // položaj gornjeg dijela pročitan s tlocrta pouzdaniji je od AI procjene koje pročelje je na kojoj strani: proturječje s tlocrtom vrijedi više od dva glasa
+      let score = -0.5 * assembleAi(trial).dropped - Math.min(1, fit.moved) - 2.5 * fit.contra + (nComp > 1 && okC(as) ? 1 : 0);
       const cg = groups.map((g, gi) => (g.ang == null ? null : Math.cos((g.ang - 90 * as[gi]) * Math.PI / 180))).filter((v) => v != null);
       if (cg.length) score += 0.3 * cg.reduce((x, y) => x + y, 0) / cg.length; // bez drugih dokaza: sjever je na nacrtu najčešće gore
       for (const f of fac) {
@@ -366,7 +367,7 @@ export function resolveSpec(spec0) {
     }
   }
   if (!best) { const fit = fitParts(sp); best = { trial: { ...sp, parts: fit.parts } }; }
-  const out = normSpecKeep({ ...best.trial, res: 2 }), fq = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+  const out = normSpecKeep({ ...best.trial, res: 3 }), fq = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
   const ch = out.facades.filter((f) => f.sideAi && f.side !== f.sideAi);
   if (ch.length) notes.push(`strane pročelja uskladio sam po nacrtanoj širini pročelja i položaju otvora: ${out.facades.map((f) => `${f.name || 'pročelje'} → ${f.side}`).join(', ')} (AI je za ${ch.map((f) => `${f.name || 'pročelje'} pročitao „${f.sideAi}”`).join(', ')})`);
   let insCh = false;
