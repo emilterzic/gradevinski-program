@@ -62,3 +62,6 @@
 - Testni skup (v0.15): vlasnik je 13. 11. dopustio da se kompleti nacrta iz njegove mape Downloads koriste za testiranje.
   Testni projekti imaju id `test…` i naziv „Test: …”; pokreću se upisom id-eva u `data/users/<uid>/aitest.queue` (`runAiTests`).
   Skenirani PDF (bez teksta): `aiBuildModel` u koraku 1 razvrstava stranice po izgledu i puni `pageInfo[n].title/text/ratio`.
+- Rezultati testnog skupa 13. 11.: „Test: prizemnica” (skenirani PDF, 11 str.) – obris L 22,15 × 10,35 m točan prema kotama,
+  1 etaža, četverostrešni krov, 17 otvora; složeni krov (niži nad garažom) i natkrivena terasa nisu modelirani.
+  „Test: IM ZAT” (34 str.) – 57,05 × 25,3 m, 2 etaže, točno prema kotama; dokument nema pročelja pa nema otvora.
