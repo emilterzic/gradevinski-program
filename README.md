@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: prototip v0.11 (studeni 2026.)
+## Stanje: prototip v0.12 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -43,6 +43,9 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   uvučena stubišta), položaj prema podnožju i sve balkone s vrstom ograde (staklena, metalna, zidana) i etažama na
   kojima se ponavljaju. Balkoni se crtaju u 3D-u, uređuju ručno i ulaze u troškovnik (ploče u m², ograde u m).
   Zadnje AI čitanje se bilježi u `ailog_<projekt>` (koraci, pročitani podaci, pogreška).
+- **Temeljitije čitanje** (v0.12): pročelja se čitaju s izreza samog crteža (bez zaglavlja i praznog papira), pa su
+  otvori na slici oko dvostruko veći; izlaz na krov je zaseban dio zgrade. `tests/model.test.mjs` je stalna provjera
+  modela prema stvarnoj zgradi iz `tests/fixtures/` (pokretanje: `node tests/model.test.mjs`).
 - **Objekt i dimenzije** (v0.6): vrsta objekta (po nacrtu, prizemnica, obiteljska kuća P+1, manja stambena zgrada P+2,
   stambena zgrada P+4) sa standardnim polaznim dimenzijama i uobičajenom izvedbom; širina, dubina, broj etaža, visina
   etaže, nagib i prepust krova mijenjaju se slobodno, i na modelu iz nacrta (tlocrt se rasteže, etaže se dodaju).

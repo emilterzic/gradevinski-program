@@ -52,3 +52,6 @@
   `MD.katToPart(obris, balkoni)` pretvara očitani tlocrt kata; `modelFromAi` slaže `v.balconies[{e, u, w, d, ys[], rail}]`,
   3D ih crta u `balconyAt`. Atribut `data-bk` je zauzet za odluke izvedbe: redovi balkona koriste `data-bal`.
   `cleanPoly` pomiče poligon u ishodište: ne koristiti ga za obrise koji moraju zadržati položaj.
+- Testovi (v0.12): prije objave pokrenuti i `node tests/model.test.mjs` (stvarna zgrada u `tests/fixtures/`, mjere ručno
+  očitane s nacrta). Svaki novi stvarni projekt koji vlasnik odobri dodaje se kao novi fixture s očekivanim modelom.
+  AI čitanje se uživo provjerava kroz dnevnik `ailog_<projekt>` u bazi, ne čitanjem cijelog projekta.
