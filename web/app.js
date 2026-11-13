@@ -1,4 +1,4 @@
-// Građevinski program – prototip v0.7
+// Građevinski program – prototip v0.8
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -1123,8 +1123,16 @@ function show3dEmpty(on) {
 /* ---------- AI: 3D model iz nacrta (tlocrt → obris; presjek i pročelja → visine, krov, otvori) ---------- */
 function jsonFrom(text) { const a = text.indexOf('{'), b = text.lastIndexOf('}'); if (a < 0 || b <= a) throw new Error('AI nije vratio podatke.'); return JSON.parse(text.slice(a, b + 1)); }
 async function askJson(prompt, images, tier) {
-  const r = await cap.sample(prompt + '\n\nOdgovori ISKLJUČIVO jednim JSON objektom, bez teksta prije ili poslije.', { ...(images?.length ? { images } : {}), modelTier: tier || 'default', cache: false });
-  return jsonFrom(r.text || '');
+  const imgs = (images || []).slice(0, cap.maxImages || 4); // platforma prima najviše 4 slike po upitu
+  for (let tryNo = 0; ; tryNo++) {
+    try {
+      const r = await cap.sample(prompt + '\n\nOdgovori ISKLJUČIVO jednim JSON objektom, bez teksta prije ili poslije.', { ...(imgs.length ? { images: imgs } : {}), modelTier: tier || 'default', cache: false });
+      return jsonFrom(r.text || '');
+    } catch (e) {
+      if (tryNo >= 1 || e?.code === 'not_granted') throw e;
+      await new Promise((res) => setTimeout(res, e?.code === 'rate_limited' ? 12000 : 1500));
+    }
+  }
 }
 // izrez stranice (box = [x0,y0,x1,y1] u udjelima stranice) kao JPEG, dulja stranica do maxSide piksela
 async function pageCropBlob(pageNo, box = [0, 0, 1, 1], maxSide = 1568) {
@@ -1148,6 +1156,7 @@ async function pageNums(pageNo, box) {
 }
 const pageLevels = (n) => [...new Set((pageInfo[n].text.match(/[+\-±]\s?\d{1,2}[.,]\d{2}(?!\d)/g) || []).map((x) => x.replace(/\s/g, '')))].slice(0, 50).join(' ') || 'nema';
 let aiModelBusy = false;
+const aiMemo = {};
 async function aiBuildModel() {
   if (aiModelBusy) return toast('AI već slaže model, pričekaj.');
   if (!pdfDoc) return toast('Prvo učitaj nacrte (PDF) u kartici Nacrt.');
@@ -1155,19 +1164,27 @@ async function aiBuildModel() {
   if (!cap.sample || !cap.imagesOk) return addMsg('sys', 'AI čitanje nacrta ovdje nije dostupno (otvori program na claude.ai i dopusti mu korištenje Claudea). 3D model možeš zadati vrstom objekta i dimenzijama.');
   aiModelBusy = true; const say = (t) => addMsg('sys', t), num = (v) => (isFinite(+v) ? +v : null);
   try {
-    say(`Slažem 3D model iz dokumenta „${P.pdf.name}”. 1/4: biram stranice (tlocrt, presjek, pročelja)…`);
-    const list = Object.entries(pageInfo).map(([n, i]) => `${n}. „${i.title}” ${i.ratio ? '1:' + i.ratio : ''} | ${i.text.slice(0, 170)}`).join('\n').slice(0, 14000);
-    const pick = await askJson(`Ovo je popis stranica PDF-a iz projekta zgrade (broj, naslov, mjerilo, početak teksta sa stranice):\n${list}\n\nOdaberi stranice potrebne za 3D model vanjskog oblika zgrade. Vrati {"tlocrt": broj stranice tlocrta prizemlja (ili karakteristične etaže ako prizemlja nema), "presjek": broj stranice presjeka ili null, "procelja": [brojevi stranica pročelja / fasada / pogleda, najviše 4, po mogućnosti cijela zgrada a ne detalji], "napomena": "kratko"}. Ako dokument ne sadrži tlocrt zgrade, vrati {"tlocrt": null, "napomena": "što dokument sadrži"}.`);
-    const tp = +pick.tlocrt;
-    if (!tp || !pageInfo[tp]) return say(`U ovom dokumentu nisam našao tlocrt zgrade${pick.napomena ? ' (' + pick.napomena + ')' : ''}. Otvori dokument s tlocrtom, presjekom i pročeljima (popis dokumenata je u kartici Nacrt) ili zadaj dimenzije ručno.`);
-    say(`2/4: tražim obris zgrade na tlocrtu (str. ${tp}, „${pageInfo[tp].title}”)…`);
-    const fr = await askJson('Priložena je stranica arhitektonskog nacrta. Nađi crtež tlocrta zgrade (bez zaglavlja, legende, tablica). Vrati {"okvir":[x0,y0,x1,y1]} u udjelima širine i visine slike (0–1, ishodište gore lijevo) tako da okvir obuhvati cijeli tlocrt zgrade zajedno s vanjskim kotama. Ako je na stranici više tlocrta, uzmi najveći.', [await pageCropBlob(tp)]);
-    let box = (Array.isArray(fr.okvir) ? fr.okvir : [0, 0, 1, 1]).map(Number);
-    if (box.length !== 4 || box.some((v) => !isFinite(v)) || box[2] - box[0] < 0.08 || box[3] - box[1] < 0.08) box = [0, 0, 1, 1];
-    box = [Math.max(0, box[0] - 0.02), Math.max(0, box[1] - 0.02), Math.min(1, box[2] + 0.02), Math.min(1, box[3] + 0.02)];
-    const crop = await pageCropBlob(tp, box), pi = pageInfo[tp], mpp = scaleOf(tp);
-    const ob = await askJson(`Priložen je izrez tlocrta zgrade${pi.ratio ? ' u mjerilu 1:' + pi.ratio : ''}. Odredi VANJSKI obris zgrade: vanjski rub vanjskih zidova (bez balkona, lođa izvan obrisa, terasa, vanjskih stubišta, rampi i nadstrešnica). Vrati {"obris":[[x,y],...]} redom po obodu u udjelima širine i visine OVE slike (0–1, ishodište gore lijevo). Koristi onoliko točaka koliko zgrada ima uglova (pravokutnik 4, razvedeni tlocrt više; zanemari istake manje od 0,5 m). Dodaj "sirina_m" i "dubina_m": ukupnu vanjsku širinu (vodoravno na slici) i dubinu (okomito na slici) zgrade u metrima ako ih možeš odrediti iz kota, inače null; "pouzdanost" 0–1; "napomena".\nBrojevi s nacrta (kote, najčešće u cm) s položajem na ovoj slici u obliku vrijednost@x,y: ${await pageNums(tp, box) || 'nema'}`, [crop], 'complex');
-    if (!Array.isArray(ob.obris) || ob.obris.length < 3) throw new Error('obris zgrade nije prepoznat na tlocrtu.');
+    const memo = (aiMemo[P.docId] ||= {}), MAXI = cap.maxImages || 4;
+    say(`Slažem 3D model iz dokumenta „${P.pdf.name}”. 1/5: biram stranice (tlocrt, presjek, pročelja)…`);
+    if (!memo.pick) {
+      const list = Object.entries(pageInfo).map(([n, i]) => `${n}. „${i.title}” ${i.ratio ? '1:' + i.ratio : ''} | ${i.text.slice(0, 170)}`).join('\n').slice(0, 14000);
+      memo.pick = await askJson(`Ovo je popis stranica PDF-a iz projekta zgrade (broj, naslov, mjerilo, početak teksta sa stranice):\n${list}\n\nOdaberi stranice potrebne za 3D model vanjskog oblika zgrade. Vrati {"tlocrt": broj stranice tlocrta prizemlja (ili karakteristične etaže ako prizemlja nema), "presjek": broj stranice presjeka ili null, "procelja": [brojevi stranica pročelja / fasada / pogleda cijele zgrade, najviše 4, bez detalja], "napomena": "kratko"}. Ako dokument ne sadrži tlocrt zgrade, vrati {"tlocrt": null, "napomena": "što dokument sadrži"}.`);
+    }
+    const pick = memo.pick, tp = +pick.tlocrt;
+    if (!tp || !pageInfo[tp]) { delete aiMemo[P.docId]; return say(`U ovom dokumentu nisam našao tlocrt zgrade${pick.napomena ? ' (' + pick.napomena + ')' : ''}. Otvori dokument s tlocrtom, presjekom i pročeljima (popis dokumenata je u kartici Nacrt) ili zadaj dimenzije ručno.`); }
+    say(`2/5: tražim obris zgrade na tlocrtu (str. ${tp}, „${pageInfo[tp].title}”)…`);
+    const pi = pageInfo[tp], mpp = scaleOf(tp);
+    if (!memo.ob) {
+      const fr = await askJson('Priložena je stranica arhitektonskog nacrta. Nađi crtež tlocrta zgrade (bez zaglavlja, legende, tablica). Vrati {"okvir":[x0,y0,x1,y1]} u udjelima širine i visine slike (0–1, ishodište gore lijevo) tako da okvir obuhvati cijeli tlocrt zgrade zajedno s vanjskim kotama. Ako je na stranici više tlocrta, uzmi najveći.', [await pageCropBlob(tp)]);
+      let box = (Array.isArray(fr.okvir) ? fr.okvir : [0, 0, 1, 1]).map(Number);
+      if (box.length !== 4 || box.some((v) => !isFinite(v)) || box[2] - box[0] < 0.08 || box[3] - box[1] < 0.08) box = [0, 0, 1, 1];
+      box = [Math.max(0, box[0] - 0.02), Math.max(0, box[1] - 0.02), Math.min(1, box[2] + 0.02), Math.min(1, box[3] + 0.02)];
+      const crop = await pageCropBlob(tp, box);
+      const ob = await askJson(`Priložen je izrez tlocrta zgrade${pi.ratio ? ' u mjerilu 1:' + pi.ratio : ''}. Odredi VANJSKI obris zgrade: vanjski rub vanjskih zidova (bez balkona, lođa izvan obrisa, terasa, vanjskih stubišta, rampi i nadstrešnica). Vrati {"obris":[[x,y],...]} redom po obodu u udjelima širine i visine OVE slike (0–1, ishodište gore lijevo). Koristi onoliko točaka koliko zgrada ima uglova (pravokutnik 4, razvedeni tlocrt više; zanemari istake manje od 0,5 m). Dodaj "sirina_m" i "dubina_m": ukupnu vanjsku širinu (vodoravno na slici) i dubinu (okomito na slici) zgrade u metrima ako ih možeš odrediti iz kota, inače null; "pouzdanost" 0–1; "napomena".\nBrojevi s nacrta (kote, najčešće u cm) s položajem na ovoj slici u obliku vrijednost@x,y: ${await pageNums(tp, box) || 'nema'}`, [crop], 'complex');
+      if (!Array.isArray(ob.obris) || ob.obris.length < 3) throw new Error('obris zgrade nije prepoznat na tlocrtu.');
+      Object.assign(memo, { box, crop, ob });
+    }
+    const { box, crop, ob } = memo;
     let pts = ob.obris.map(([fx, fy]) => [(box[0] + fx * (box[2] - box[0])) * pi.w, (box[1] + fy * (box[3] - box[1])) * pi.h]);
     const ext = (k) => Math.max(...pts.map((q) => q[k])) - Math.min(...pts.map((q) => q[k]));
     const sw = num(ob.sirina_m), sd = num(ob.dubina_m);
@@ -1178,12 +1195,35 @@ async function aiBuildModel() {
     const kx = sw > 2 && Math.abs(sw / ext(0) - 1) < 0.3 ? sw / ext(0) : 1, kz = sd > 2 && Math.abs(sd / ext(1) - 1) < 0.3 ? sd / ext(1) : 1;
     pts = pts.map((q) => [q[0] * kx, q[1] * kz]);
     const W = r2(ext(0)), D = r2(ext(1));
-    const pages = [...new Set([pick.presjek, ...(Array.isArray(pick.procelja) ? pick.procelja : [])].map(Number).filter((n) => n && pageInfo[n] && n !== tp))].slice(0, 5);
-    say(`3/4: čitam visine, krov i otvore${pages.length ? ' (str. ' + pages.join(', ') + ')' : ' (nema presjeka ni pročelja, samo tlocrt)'}…`);
-    const imgs = [crop], desc = [`Slika 1: izrez tlocrta (str. ${tp}).`];
-    for (const n of pages) { imgs.push(await pageCropBlob(n)); desc.push(`Slika ${imgs.length}: str. ${n} „${pageInfo[n].title}”${n === +pick.presjek ? ' (presjek)' : ' (pročelje)'}. Visinske kote na stranici: ${pageLevels(n)}`); }
-    const hv = await askJson(`Slažem 3D model vanjskog oblika zgrade. Tlocrtni obris je već određen: širina ${fq(W)} m (vodoravno na tlocrtu) × dubina ${fq(D)} m.\n${desc.join('\n')}\n\nVrati JSON: {"etaze": broj nadzemnih etaža (prizemlje + katovi; stambeno potkrovlje se broji, podrum i suteren ne), "visinaEtaze": visina od poda do poda u m, "visinaVrhaZida": visina vrha vanjskog zida od ±0,00 u m (streha kosog krova ili vrh atike ravnog krova), "visinaSljemena": u m ili null, "krov": "ravni" | "dvostresni" | "cetverostresni" | "jednostresni", "smjerSljemena": "lijevo-desno" ili "gore-dolje" kako sljeme ide na slici tlocrta (null za ravni krov), "prepust": prepust krova u m, "procelja": [{"slika": broj slike, "naziv": naziv pročelja s nacrta, "strana": koju stranu tlocrta sa slike 1 to pročelje prikazuje: "gore" | "desno" | "dolje" | "lijevo", "otvori": [{"x": položaj sredine otvora po širini pročelja 0–1 slijeva nadesno kako je nacrtano, "parapet": visina donjeg ruba otvora od ±0,00 u m, "sirina": m, "visina": m, "vrsta": "prozor" | "vrata" | "klizna"}]}], "pouzdanost": 0–1, "napomene": ["što nisi mogao pročitati ili što je pojednostavljeno"]}.\nNavedi sve prozore i vrata koje vidiš na svakom pročelju, svaku etažu posebno (balkonska vrata su "klizna" ako su šira od 1,6 m, inače "vrata"). Stranu odredi po nazivu pročelja (sjever/jug/istok/zapad uz oznaku sjevera na tlocrtu) ili po obliku zgrade.`, imgs, 'complex');
-    say('4/4: slažem model…');
+    const sect = +pick.presjek && pageInfo[+pick.presjek] && +pick.presjek !== tp ? +pick.presjek : null;
+    const elev = [...new Set((Array.isArray(pick.procelja) ? pick.procelja : []).map(Number).filter((n) => n && pageInfo[n] && n !== tp && n !== sect))].slice(0, 6);
+    const pdesc = (n, k, kind) => `Slika ${k}: str. ${n} „${pageInfo[n].title}” (${kind}). Visinske kote na stranici: ${pageLevels(n)}`;
+    const pageImg = async (n) => (memo['img' + n] ||= await pageCropBlob(n));
+    // 3/5 visine i krov: tlocrt + presjek + pročelja koliko stane u jedan upit (najviše 4 slike)
+    if (!memo.hv) {
+      const hp = [sect, ...elev].filter(Boolean).slice(0, MAXI - 1);
+      say(`3/5: čitam etaže, visine i krov${hp.length ? ' (str. ' + hp.join(', ') + ')' : ' (nema presjeka ni pročelja, samo tlocrt)'}…`);
+      const imgs = [crop], desc = [`Slika 1: izrez tlocrta (str. ${tp}).`];
+      for (const n of hp) { imgs.push(await pageImg(n)); desc.push(pdesc(n, imgs.length, n === sect ? 'presjek' : 'pročelje')); }
+      memo.hv = await askJson(`Slažem 3D model vanjskog oblika zgrade. Tlocrtni obris je već određen: širina ${fq(W)} m (vodoravno na tlocrtu) × dubina ${fq(D)} m.\n${desc.join('\n')}\n\nVrati JSON: {"etaze": broj nadzemnih etaža (prizemlje + katovi; stambeno potkrovlje se broji, podrum i suteren ne), "visinaEtaze": visina od poda do poda u m, "visinaVrhaZida": visina vrha vanjskog zida od ±0,00 u m (streha kosog krova ili vrh atike ravnog krova), "visinaSljemena": u m ili null, "krov": "ravni" | "dvostresni" | "cetverostresni" | "jednostresni", "smjerSljemena": "lijevo-desno" ili "gore-dolje" kako sljeme ide na slici tlocrta (null za ravni krov), "prepust": prepust krova u m, "pouzdanost": 0–1, "napomene": ["što nisi mogao pročitati ili što je pojednostavljeno"]}.`, imgs, 'complex');
+    }
+    const hv = memo.hv;
+    // 4/5 otvori: po dva pročelja u upitu; ako jedan upit ne uspije, model se ipak složi bez tih otvora
+    memo.facs ||= {}; const failed = [], per = Math.max(1, Math.min(2, MAXI - 1));
+    for (let i = 0; i < elev.length; i += per) {
+      const g = elev.slice(i, i + per), key = g.join('-');
+      if (memo.facs[key]) continue;
+      say(`4/5: čitam prozore i vrata s pročelja (str. ${g.join(', ')})…`);
+      try {
+        const imgs = [crop], desc = [`Slika 1: izrez tlocrta (str. ${tp}).`];
+        for (const n of g) { imgs.push(await pageImg(n)); desc.push(pdesc(n, imgs.length, 'pročelje')); }
+        const fr2 = await askJson(`Slažem 3D model zgrade: tlocrt ${fq(W)} × ${fq(D)} m, ${num(hv.etaze) || '?'} nadzemnih etaža, visina etaže ${num(hv.visinaEtaze) || '?'} m, vrh zida +${num(hv.visinaVrhaZida) || '?'} m.\n${desc.join('\n')}\n\nZa svako pročelje na slikama od 2 nadalje vrati {"procelja": [{"slika": broj slike, "naziv": naziv pročelja s nacrta, "strana": koju stranu tlocrta sa slike 1 to pročelje prikazuje: "gore" | "desno" | "dolje" | "lijevo", "otvori": [{"x": položaj sredine otvora po širini TOG pročelja 0–1 (0 = lijevi rub zgrade, 1 = desni rub zgrade, kako je nacrtano), "parapet": visina donjeg ruba otvora od ±0,00 u m, "sirina": m, "visina": m, "vrsta": "prozor" | "vrata" | "klizna"}]}], "napomena": "kratko"}.\nAko je na jednoj slici više pročelja, vrati svako kao zaseban zapis. Navedi sve prozore i vrata koje vidiš, svaku etažu posebno (balkonska vrata su "klizna" ako su šira od 1,6 m, inače "vrata"). Stranu odredi po nazivu pročelja (sjever/jug/istok/zapad uz oznaku sjevera na tlocrtu) ili po obliku zgrade.`, imgs, 'complex');
+        memo.facs[key] = { list: Array.isArray(fr2.procelja) ? fr2.procelja : [], note: fr2.napomena };
+      } catch (e) { if (e?.code === 'not_granted') throw e; console.warn(e); failed.push(...g); }
+    }
+    hv.procelja = Object.values(memo.facs).flatMap((f) => f.list);
+    hv.napomene = [...(Array.isArray(hv.napomene) ? hv.napomene : []), ...Object.values(memo.facs).map((f) => f.note).filter(Boolean), ...(failed.length ? [`otvore sa str. ${failed.join(', ')} nisam uspio pročitati (pokreni ponovno za dopunu)`] : [])];
+    say('5/5: slažem model…');
     const ROOF = { ravni: 'flat', dvostresni: 'gable', cetverostresni: 'hip', jednostresni: 'mono' };
     const base = MD.modelFromAi({ fp: pts, floors: num(hv.etaze), storeyH: num(hv.visinaEtaze), wallTop: num(hv.visinaVrhaZida), ridgeH: num(hv.visinaSljemena), roof: ROOF[hv.krov] || 'flat', ridgeDir: hv.smjerSljemena === 'lijevo-desno' ? 'x' : 'z', ov: num(hv.prepust),
       facades: (Array.isArray(hv.procelja) ? hv.procelja : []).map((f) => ({ side: f.strana, name: f.naziv, openings: (Array.isArray(f.otvori) ? f.otvori : []).map((o) => ({ x: num(o.x), s: num(o.parapet), w: num(o.sirina), h: num(o.visina), t: o.vrsta })) })) });
@@ -1196,10 +1236,11 @@ async function aiBuildModel() {
     const d = MD.modelDims(base), conf = Math.round(100 * Math.min(num(ob.pouzdanost) ?? 0.5, num(hv.pouzdanost) ?? 0.5)), notes = [ob.napomena, ...(Array.isArray(hv.napomene) ? hv.napomene : [])].filter(Boolean).map(String);
     const bare = base.fp.length - new Set(base.openings.map((o) => o.e)).size;
     addMsg('assistant', `3D model je složen iz nacrta (AI prijedlog, provjeri ga):\n• tlocrt ${fq(d.W)} × ${fq(d.D)} m, ${base.fp.length} uglova (str. ${tp})\n• ${MD.etaze(d.floors)}, etaža ${fq(d.storeyH)} m, vrh zida +${fq(num(hv.visinaVrhaZida) ?? base.eave)} m, krov: ${MD.optOf('krovOblik', base.roof.type).n.toLowerCase()}\n• ${base.openings.length} otvora s pročelja${bare > 0 ? `; ${bare} stranica zgrade je bez otvora jer ih na nacrtima nisam našao` : ''}\n• pouzdanost oko ${conf} %${notes.length ? '\nNapomene: ' + notes.slice(0, 5).join(' · ') : ''}\n\nModel je jedan obris zgrade s etažama, krovom i otvorima. Dimenzije ispravi u 3D prikaz → Izvedba i cijene → Objekt i dimenzije.`);
+    if (!failed.length) delete aiMemo[P.docId];
     showView('3d');
   } catch (e) {
     console.warn(e);
-    say(e?.code === 'not_granted' ? 'AI nije dopušten u ovom prikazu. 3D model zadaj vrstom objekta i dimenzijama.' : e?.code === 'rate_limited' ? 'AI je trenutno zauzet (ograničenje broja upita). Pokušaj ponovno za minutu.' : `Nisam uspio složiti model: ${e?.message || e} Pokušaj ponovno ili zadaj dimenzije ručno.`);
+    say(e?.code === 'not_granted' ? 'AI nije dopušten u ovom prikazu. 3D model zadaj vrstom objekta i dimenzijama.' : e?.code === 'rate_limited' ? 'AI je trenutno zauzet (ograničenje broja upita). Pokušaj ponovno za minutu.' : `Nisam uspio složiti model (${e?.message || e}). Pokreni ponovno: koraci koji su uspjeli neće se ponavljati. Dimenzije možeš zadati i ručno.`);
   } finally { aiModelBusy = false; }
 }
 function renderStages3d() {
@@ -1549,7 +1590,7 @@ async function initCaps() {
   Object.assign(cap, { db, user, sample, dict, dl, assets });
   if (user) { try { cap.uid = await user.id(); } catch {} }
   if (!cap.uid) cap.db = null;
-  if (sample) { try { cap.imagesOk = !!(await sample.limits())?.images; } catch {} } else $('#aiState').textContent = 'nije dostupan';
+  if (sample) { try { const lim = await sample.limits(); cap.imagesOk = !!lim?.images; cap.maxImages = Math.max(1, Math.min(4, +(lim?.maxImages ?? lim?.images?.max ?? lim?.images?.maxPerCall ?? 4) || 4)); } catch {} } else $('#aiState').textContent = 'nije dostupan';
   setupDictation();
 }
 async function boot() {

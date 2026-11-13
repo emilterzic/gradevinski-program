@@ -35,3 +35,5 @@
 - 3D model se NIKAD ne izmišlja: `ensureModel()` vraća null ako model nije iz primjera, iz AI čitanja (`aiBuildModel` →
   `MD.modelFromAi`, izvor u `P.modelBase`, tip `ai`) ili zadan dimenzijama. Bez modela `show3dEmpty()`.
 - AI čitanje nacrta: slike idu preko `cap.sample(..., { images })` (alati ne mogu vraćati slike); kote se šalju kao tekst s položajem.
+- `cap.sample` prima najviše 4 slike po upitu (`cap.maxImages`): `aiBuildModel` zato ide u koracima (stranice → obris →
+  visine i krov → otvori po dva pročelja), s međurezultatima u `aiMemo` da ponovni pokušaj nastavi gdje je stao.
