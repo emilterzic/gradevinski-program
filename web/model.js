@@ -57,6 +57,7 @@ export function autoModel(d = {}) {
 // Uobičajene polazne dimenzije (nisu propis): korisnik svaku može promijeniti. build = uobičajena izvedba za tu vrstu.
 export const TYPES = [
   { id: 'nacrt', n: 'Po nacrtu', note: 'Model složen iz priloženih nacrta', demo: true, build: { krovOblik: 'gable', pokrov: 'crijep', konstrukcija: 'opeka25', temelji: 'trakasti' } },
+  { id: 'ai', n: 'Iz nacrta (AI)', note: 'Model koji je AI složio iz učitanih nacrta', ai: true },
   { id: 'prizemnica', n: 'Prizemnica', d: { W: 12, D: 9, floors: 1, storeyH: 2.9, pitch: 25, ov: 0.6 }, build: { krovOblik: 'hip', konstrukcija: 'opeka25', temelji: 'trakasti' } },
   { id: 'kuca', n: 'Obiteljska kuća P+1', d: { W: 10, D: 8, floors: 2, storeyH: 2.9, pitch: 30, ov: 0.6 }, build: { krovOblik: 'gable', konstrukcija: 'opeka25', temelji: 'trakasti' } },
   { id: 'zgrada3', n: 'Manja stambena zgrada P+2', d: { W: 16, D: 11, floors: 3, storeyH: 2.95, pitch: 25, ov: 0.5 }, build: { krovOblik: 'hip', konstrukcija: 'opeka30', temelji: 'trakasti' } },
@@ -92,7 +93,7 @@ export function resizeModel(base, dims) {
     const L = E1[o.e].L, k = L / E0[o.e].L; if (L < o.w + 0.6) return;
     const u = Math.min(L - o.w / 2 - 0.3, Math.max(o.w / 2 + 0.3, o.u * k));
     const put = (s) => { const c = { ...o, u: rd(u), s: rd(s) }; if (fits(c)) out.push(c); };
-    if (o.s >= base.eave - 0.05) return put(m.eave + (o.s - base.eave) * (rise / rise0)); // zabatni prozor
+    if (o.s >= base.eave - 0.05) return put(m.eave + (o.s - base.eave) * (rise / Math.max(0.1, rise0))); // zabatni prozor
     const f = Math.min(n0 - 1, Math.floor((o.s + 0.01) / h0)), rel = h >= h0 ? o.s - f * h0 : Math.min(o.s - f * h0, Math.max(0, h - o.h - 0.25));
     if (f === 0) { if (o.s + o.h <= m.eave) put(rel); return; }
     for (let ff = 1; ff < n; ff++) if (Math.min(ff, n0 - 1) === f) put(ff * h + rel);
@@ -102,6 +103,55 @@ export function resizeModel(base, dims) {
   if (base.canopy) { const K = base.canopy; m.canopy = { ...K, z0: rd(Z(K.z0)), z1: rd(Z(K.z0) + (K.z1 - K.z0)), y: rd(Math.min(K.y, h - 0.2)) }; }
   m.chimneys = (base.chimneys || []).map((c) => ({ ...c, x: rd(X(c.x)), z: rd(Z(c.z)), top: rd(c.top + (m.ridge - base.ridge)) }));
   m.resized = ['W', 'D', 'floors', 'storeyH', 'pitch', 'ov'].some((k) => Math.abs(d[k] - modelDims(base)[k]) > 0.005);
+  return m;
+}
+
+/* ---------- model iz AI čitanja nacrta ---------- */
+// očisti obris: makni preblizu točke, poravnaj gotovo vodoravne/okomite stranice, makni kolinearne točke
+export function cleanPoly(pts) {
+  let fp = (pts || []).map((p) => [Number(p[0]), Number(p[1])]).filter((p) => isFinite(p[0]) && isFinite(p[1]));
+  fp = fp.filter((p, i) => { const q = fp[(i + fp.length - 1) % fp.length]; return i === 0 || Math.hypot(p[0] - q[0], p[1] - q[1]) > 0.25; });
+  for (let pass = 0; pass < 2; pass++) fp.forEach((p, i) => { const q = fp[(i + 1) % fp.length], dx = Math.abs(q[0] - p[0]), dz = Math.abs(q[1] - p[1]); if (dx < 0.4 && dz > 2 * dx) q[0] = p[0]; else if (dz < 0.4 && dx > 2 * dz) q[1] = p[1]; });
+  fp = fp.filter((p, i) => { const a = fp[(i + fp.length - 1) % fp.length], c = fp[(i + 1) % fp.length]; return Math.abs((p[0] - a[0]) * (c[1] - p[1]) - (p[1] - a[1]) * (c[0] - p[0])) > 0.05; });
+  const x0 = Math.min(...fp.map((p) => p[0])), z0 = Math.min(...fp.map((p) => p[1]));
+  return fp.map((p) => [Math.round((p[0] - x0) * 20) / 20, Math.round((p[1] - z0) * 20) / 20]);
+}
+// a: { fp (m, x udesno, z dolje kao na tlocrtu), floors, storeyH, wallTop, ridgeH, roof: flat|gable|hip|mono, ridgeDir: 'x'|'z',
+//      ov, facades: [{ side: gore|desno|dolje|lijevo, name, openings: [{ x: 0..1 slijeva nadesno, s, w, h, t }] }] }
+export function modelFromAi(a) {
+  const lim = (v, lo, hi, d) => (isFinite(+v) && +v > 0 ? Math.min(hi, Math.max(lo, +v)) : d);
+  let fp = cleanPoly(a.fp); if (fp.length < 3) throw new Error('Obris zgrade nije prepoznat.');
+  const roof = ['flat', 'gable', 'hip', 'mono'].includes(a.roof) ? a.roof : 'flat', flat = roof === 'flat';
+  const rot = (roof === 'gable' || roof === 'mono') && a.ridgeDir === 'x'; // sljeme mora ići po osi z
+  if (rot) fp = cleanPoly(fp.map(([x, z]) => [-z, x]));
+  const SIDES = ['gore', 'desno', 'dolje', 'lijevo'], sideOf = (sd) => (rot && SIDES.includes(sd) ? SIDES[(SIDES.indexOf(sd) + 1) % 4] : sd);
+  const floors = Math.round(lim(a.floors, 1, 12, 1));
+  let h = lim(a.storeyH, 2.4, 4.5, 0);
+  const top = lim(a.wallTop, 2.4, 60, floors * (h || 2.9) + (flat ? 0.6 : 0.2));
+  if (!h) h = Math.min(4.5, Math.max(2.4, (top - (flat ? 0.6 : 0.2)) / floors));
+  const eave = rd(flat ? top - PARAPET : top), b = bbox({ fp }), half = (b.x1 - b.x0) / 2;
+  const rise = Math.min(Math.tan(50 * Math.PI / 180) * half, Math.max(Math.tan(8 * Math.PI / 180) * half, +a.ridgeH > eave ? +a.ridgeH - eave : Math.tan(25 * Math.PI / 180) * half));
+  const m = { v: 2, src: 'ai', fp, floors, storeyH: rd(h), eave, ridge: rd(eave + rise), ridgeX: rd((b.x0 + b.x1) / 2), ov: flat ? 0 : rd(Math.min(1.5, Math.max(0, isFinite(+a.ov) ? +a.ov : 0.5))), wallT: 0.4, base: 0.5, roof: { type: roof }, openings: [], balcony: null, canopy: null, chimneys: [], colors: { ...DEFAULT_COLORS }, labels: [] };
+  const E = edges(m), N = E.map((e) => outward(m, e)), DIR = { gore: [0, -1], desno: [1, 0], dolje: [0, 1], lijevo: [-1, 0] };
+  const fits = (o) => !m.openings.some((q) => q.e === o.e && Math.abs(q.u - o.u) < (q.w + o.w) / 2 + 0.1 && q.s < o.s + o.h && o.s < q.s + q.h);
+  (a.facades || []).forEach((f) => {
+    const sd = sideOf(f.side), d = DIR[sd]; if (!d) return;
+    const horiz = d[0] === 0, lo = horiz ? b.x0 : b.z0, span = horiz ? b.x1 - b.x0 : b.z1 - b.z0, inc = sd === 'dolje' || sd === 'lijevo';
+    const faces = E.filter((e, i) => N[i][0] * d[0] + N[i][1] * d[1] > 0.7);
+    faces.forEach((e) => { if (f.name && !m.labels[e.i]) m.labels[e.i] = String(f.name).slice(0, 40); });
+    const outK = (e) => (horiz ? (e.p[1] + e.q[1]) / 2 * d[1] : (e.p[0] + e.q[0]) / 2 * d[0]);
+    (f.openings || []).forEach((o) => {
+      const x = Math.min(1, Math.max(0, +o.x)); if (!isFinite(x)) return;
+      const w = lim(o.w, 0.4, 8, 1.2), hh = lim(o.h, 0.4, 3.4, 1.3), c = lo + (inc ? x : 1 - x) * span;
+      const cand = faces.filter((e) => { const a0 = horiz ? e.p[0] : e.p[1], a1 = horiz ? e.q[0] : e.q[1]; return c >= Math.min(a0, a1) + w / 2 + 0.1 && c <= Math.max(a0, a1) - w / 2 - 0.1; }).sort((p, q) => outK(q) - outK(p));
+      if (!cand.length) return;
+      const e = cand[0], a0 = horiz ? e.p[0] : e.p[1], a1 = horiz ? e.q[0] : e.q[1], t = o.t === 'vrata' ? 'door' : o.t === 'klizna' ? 'slide' : 'win';
+      let sill = Math.max(0, isFinite(+o.s) ? +o.s : 0.9); if (t !== 'win') sill = Math.round(sill / h) * h;
+      const op = { e: e.i, u: rd((c - a0) / (a1 - a0) * e.L), w: rd(w), h: rd(hh), s: rd(sill), t };
+      if (fits(op)) m.openings.push(op);
+    });
+  });
+  E.forEach((e) => { m.labels[e.i] ||= 'Pročelje ' + (e.i + 1); });
   return m;
 }
 

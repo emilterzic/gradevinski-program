@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: prototip v0.6 (studeni 2026.)
+## Stanje: prototip v0.7 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -24,6 +24,12 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   fasada (ETICS EPS/vuna, ventilirana, kamen, klinker, drvo), stolarija (PVC, ALU, drvo, drvo-ALU; dvostruko/trostruko
   staklo; HS/PSK klizne stijene). Odabir odmah mijenja 3D model i zamjenjuje pripadne stavke troškovnika
   (količine iz modela, cijena označena kao okvirna dok je korisnik ne potvrdi; ručne količine ostaju).
+- **Dokumenti projekta** (v0.7): više PDF-ova po projektu; novi dokument se dodaje na popis (ništa se ne zamjenjuje ni ne
+  briše), mjerila i izmjere vode se po dokumentu. Sličice stranica crtaju se tek kad su vidljive.
+- **3D model iz nacrta (AI)** (v0.7): AI odabere stranice (tlocrt, presjek, pročelja), odredi vanjski obris na tlocrtu
+  (uz kote iz PDF teksta i mjerilo), pročita etaže, visine, krov i otvore po pročeljima i složi model (`modelFromAi`).
+  Rezultat je AI prijedlog koji se ispravlja u „Objekt i dimenzije”. Bez modela 3D prikaz pokazuje prazno stanje:
+  program više nikad sam ne stvara okvirnu kuću.
 - **Objekt i dimenzije** (v0.6): vrsta objekta (po nacrtu, prizemnica, obiteljska kuća P+1, manja stambena zgrada P+2,
   stambena zgrada P+4) sa standardnim polaznim dimenzijama i uobičajenom izvedbom; širina, dubina, broj etaža, visina
   etaže, nagib i prepust krova mijenjaju se slobodno, i na modelu iz nacrta (tlocrt se rasteže, etaže se dodaju).

@@ -258,6 +258,18 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 .opt .pr { font-family: var(--f-mono); font-size: 12.5px; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
 .opt[aria-pressed="true"] .pr { color: var(--ink); font-weight: 500; }
 .opt .nt { grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.doclist { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px; }
+.doclist .drow { display: grid; grid-template-columns: 1fr auto; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.doclist .drow[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.doclist { flex: none; }
+.doclist .dn { border: 0; background: none; text-align: left; padding: 6px 2px 6px 8px; font-size: 12px; line-height: 1.3; color: var(--ink); min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.doclist .icon-btn { align-self: start; margin: 2px; }
+.doclist .drow[aria-current="true"] .dn { font-weight: 600; }
+.v3d-empty { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; padding: 24px; background: var(--bg); overflow: auto; }
+.v3d-empty .card { max-width: 560px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 22px 24px; display: flex; flex-direction: column; gap: 10px; }
+.v3d-empty h2 { font-family: var(--f-display); font-size: 21px; margin: 0; }
+.v3d-empty p { margin: 0; line-height: 1.5; }
+.v3d-empty .btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
 .dims { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; margin-top: 4px; }
 .dims label { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--muted); }
 .dims input { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--panel); color: var(--ink); width: 100%; min-width: 0; font-family: var(--f-mono); font-size: 13.5px; }
@@ -313,7 +325,7 @@ td.pc .dot-ai, td.pc .dot-kat { position: absolute; left: 3px; top: 16px; margin
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.6</small></div>
+  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.7</small></div>
   <button class="proj-btn" id="projBtn" aria-haspopup="true"><span id="projName">Projekt</span> ▾</button>
   <div class="seg" role="group" aria-label="Uloga">
     <button id="roleP" aria-pressed="true">Projektant</button>

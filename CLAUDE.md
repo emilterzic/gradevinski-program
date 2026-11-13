@@ -30,3 +30,8 @@
 - Objekt (v0.6): `P.modelType` (id iz `MD.TYPES`) + `P.modelDims` {W, D, floors, storeyH, pitch, ov}; mijenja se samo preko
   `setObjekt(type, dims)`. Model iz nacrta se uvijek izvodi iz izvornog `demoModel()` preko `resizeModel()` (ne kumulativno);
   ostale vrste preko `autoModel()`. Granice su u `DIM_LIM`. Dimenzije u `TYPES` su polazne vrijednosti, ne propis.
+- Dokumenti (v0.7): `P.docs[]` {id, name, url|session, demo, pageScale}, `P.docId`; `P.pdf` i `P.pageScale` uvijek pokazuju na
+  aktivni dokument (`linkDoc`). Izmjere imaju `doc`; filtrirati s `inPage(m, page)`. Učitavanje PDF-a nikad ne briše podatke.
+- 3D model se NIKAD ne izmišlja: `ensureModel()` vraća null ako model nije iz primjera, iz AI čitanja (`aiBuildModel` →
+  `MD.modelFromAi`, izvor u `P.modelBase`, tip `ai`) ili zadan dimenzijama. Bez modela `show3dEmpty()`.
+- AI čitanje nacrta: slike idu preko `cap.sample(..., { images })` (alati ne mogu vraćati slike); kote se šalju kao tekst s položajem.
