@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: prototip v0.16 (studeni 2026.)
+## Stanje: prototip v0.17 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -55,6 +55,10 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 - **Skenirani nacrti i testni način** (v0.15): PDF bez tekstnog sloja razvrstava se po izgledu stranica (vrsta crteža,
   naslov, mjerilo sa slike). Testni način: projekti navedeni u dokumentu baze `aitest` {queue[]} čitaju se redom pri
   otvaranju programa, a rezultat ide u `ailog_<projekt>`.
+- **BIM alati** (v0.17), kartica „Model” u 3D prikazu: popis etaža s količinama (zidovi, ploča, otvori, balkoni) i
+  izdvajanje etaže, presjek (uzdužni, poprečni, vodoravni) s klizačem, prozirni prikaz, svojstva kliknutog elementa
+  (prozor, vrata, zid, balkon: mjere, etaža, pročelje, izvedba) uz stavke troškovnika. AI sažetak ima red „kontrola”
+  (pročelja n/4, otvori pročitani i bez zida, balkoni viđeni na pročeljima a nisu u modelu).
 - **Objekt i dimenzije** (v0.6): vrsta objekta (po nacrtu, prizemnica, obiteljska kuća P+1, manja stambena zgrada P+2,
   stambena zgrada P+4) sa standardnim polaznim dimenzijama i uobičajenom izvedbom; širina, dubina, broj etaža, visina
   etaže, nagib i prepust krova mijenjaju se slobodno, i na modelu iz nacrta (tlocrt se rasteže, etaže se dodaju).

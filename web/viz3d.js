@@ -511,7 +511,7 @@ export class Viz3D {
     }
     if (m.canopy) { const K = m.canopy, w = K.x1 - K.x0, d = K.z1 - K.z0; this.box(w, 0.16, d, M.render, K.x0 + w / 2, K.y, K.z0 + d / 2, 'fasada', 2, 9); this.box(w + 0.04, 0.05, d + 0.04, M.metal, K.x0 + w / 2, K.y + 0.1, K.z0 + d / 2, 'limarija', 4, 9); }
     this.landscape(m, b, E, cx, cz);
-    this.setStage(this.stage);
+    this.setStage(this.stage); if (this.xray) this.setXray(true);
     if (!this.viewed) { this.view('persp', true); this.viewed = true; } else this.placeSun(this.camera.position, this.controls.target);
     this.invalidateShadows();
   }
@@ -714,13 +714,27 @@ export class Viz3D {
     const step = () => { const k = Math.min(1, (performance.now() - t1) / 750), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; cam.position.lerpVectors(p0, pos, e); ctl.target.lerpVectors(t0, tgt, e); this.needFast = true; if (k < 1) requestAnimationFrame(step); };
     step();
   }
+  // presjek i etaže (kao u BIM preglednicima): ravnine rezanja u koordinatama modela (x desno, z dolje, y gore).
+  // spec: null | { axis: 'x' | 'y' | 'z', pos } (ostaje dio ispod/ispred ravnine) | { y0, y1 } (ostaje sloj između)
+  setClip(spec) {
+    const P = (nx, ny, nz, c) => new THREE.Plane(new THREE.Vector3(nx, ny, nz), c);
+    this.renderer.clippingPlanes = !spec ? [] : spec.axis === 'x' ? [P(-1, 0, 0, spec.pos)] : spec.axis === 'z' ? [P(0, 0, -1, spec.pos)] : spec.axis === 'y' ? [P(0, -1, 0, spec.pos)] : [P(0, 1, 0, -spec.y0), P(0, -1, 0, spec.y1)];
+    this.invalidateShadows(); this.needFull = true;
+  }
+  // prozirni prikaz: svi materijali zgrade postaju poluprozirni da se vidi unutrašnjost
+  setXray(on) {
+    this.xray = !!on;
+    Object.values(this.M || {}).forEach((m) => { if (!m || !m.isMaterial) return; const o = m.userData.x0 ||= { t: m.transparent, o: m.opacity, d: m.depthWrite }; m.transparent = on ? true : o.t; m.opacity = on ? Math.min(o.o, 0.3) : o.o; m.depthWrite = on ? false : o.d; m.needsUpdate = true; });
+    this.needFull = true;
+  }
   pick(e) {
     const r = this.renderer.domElement.getBoundingClientRect();
     this.ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.ray.setFromCamera(this.ptr, this.camera);
-    const hit = this.ray.intersectObjects(this.parts.filter((p) => p.visible), true)[0];
+    const cp = this.renderer.clippingPlanes || []; // odrezani dio modela se ne može kliknuti
+    const hit = this.ray.intersectObjects(this.parts.filter((p) => p.visible), true).find((h) => cp.every((pl) => pl.distanceToPoint(h.point) >= -0.01));
     let o = hit?.object; while (o && !o.userData?.part) o = o.parent;
-    this.api.onPick && this.api.onPick(o ? o.userData.part : null);
+    this.api.onPick && this.api.onPick(o ? o.userData.part : null, hit && o ? [hit.point.x, hit.point.y, hit.point.z] : null);
   }
   // slika visoke rezolucije: višestruko uzorkovanje (SSAA 8×) + ambijentalna okluzija, s natpisom
   async snapshot(w = 2560, h = 1440, caption = '') {

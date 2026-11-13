@@ -65,3 +65,7 @@
 - Rezultati testnog skupa 13. 11.: „Test: prizemnica” (skenirani PDF, 11 str.) – obris L 22,15 × 10,35 m točan prema kotama,
   1 etaža, četverostrešni krov, 17 otvora; složeni krov (niži nad garažom) i natkrivena terasa nisu modelirani.
   „Test: IM ZAT” (34 str.) – 57,05 × 25,3 m, 2 etaže, točno prema kotama; dokument nema pročelja pa nema otvora.
+- BIM alati (v0.17): stanje u `bim {st, axis, t, xray}`; `applyBim()` nakon svake izgradnje modela zove `V.setClip()` (globalne
+  ravnine rezanja u koordinatama modela; nebo je ShaderMaterial pa se ne reže) i `V.setXray()`. `V.pick` javlja i točku pogotka;
+  `elemAt(pt)` nalazi balkon/otvor/zid iz podataka modela (mreže su spojene po materijalu, pa se element ne čita iz mreže).
+  Kartica „Model”: `modelHtml()`/`bindModel()`. Vezanje kontrola kartice „Prikaz” samo kad je ona otvorena.

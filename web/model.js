@@ -204,6 +204,8 @@ export function katToPart(obris, balkoni) {
   return { W: rd(W), D: rd(D), shape: normShape(fp.map(([x, z]) => [(x - bb.x0) / W, (z - bb.z0) / D])), balconies: normBalc(out) };
 }
 export const modelFromAi = (a0) => assembleAi(a0).m;
+// kontrola potpunosti: koliko pročitanih otvora nije našlo zid u modelu
+export const specStats = (a0) => ({ dropped: assembleAi(a0).dropped });
 function assembleAi(a0) {
   const a = normSpecKeep(a0), flatTop = a.roof === 'flat', nP = a.parts.length;
   if (a.fp.length < 3) throw new Error('Obris zgrade nije prepoznat.');
