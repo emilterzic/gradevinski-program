@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: prototip v0.9 (studeni 2026.)
+## Stanje: prototip v0.10 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -34,6 +34,11 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   visinama etaža (npr. poslovno prizemlje 5,76 m, stambeni katovi 3 m). AI ih čita iz presjeka, tlocrta kata i pročelja;
   u „Objekt i dimenzije” svaki se dio ručno ispravlja (etaže, visine, uvlake) ili dodaje. Količine, terasa nižeg dijela
   i statika računaju se po dijelovima.
+- **Usklađivanje nacrta** (v0.10): AI zna zamijeniti strane pročelja ili položaj gornjeg dijela. `MD.resolveSpec` zato
+  provjerava da se nacrti međusobno slažu: strane svijeta iz naziva pročelja idu u krug, nacrtana širina pročelja mora
+  odgovarati širini ili dubini tlocrta, a prozori i izlozi moraju pasti na stvarne zidove. Veličina gornjeg dijela uzima
+  se s tlocrta, položaj s pročelja. Što je ispravljeno piše u poruci, a strane pročelja i uvlake korisnik mijenja ručno.
+  Izlozi širi od 6 m crtaju se u punoj širini (polja po 4 m), ostakljenje preko više etaža kao polja jedno iznad drugog.
 - **Objekt i dimenzije** (v0.6): vrsta objekta (po nacrtu, prizemnica, obiteljska kuća P+1, manja stambena zgrada P+2,
   stambena zgrada P+4) sa standardnim polaznim dimenzijama i uobičajenom izvedbom; širina, dubina, broj etaža, visina
   etaže, nagib i prepust krova mijenjaju se slobodno, i na modelu iz nacrta (tlocrt se rasteže, etaže se dodaju).

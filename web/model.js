@@ -135,7 +135,7 @@ export function normSpec(a) {
     const ins = i > 0 ? p.inset || {} : null, n0 = (v) => (isFinite(+v) && +v > 0 ? rd(Math.min(40, +v)) : 0);
     return { name: String(p.name || (i ? 'Gornji dio ' + i : 'Podnožje')).slice(0, 40), floors, heights, inset: ins ? { g: n0(ins.g), d: n0(ins.d), dl: n0(ins.dl), l: n0(ins.l) } : null };
   });
-  return { fp: cleanPoly(a.fp), roof, ridgeDir: a.ridgeDir === 'x' ? 'x' : 'z', ridgeH: isFinite(+a.ridgeH) ? +a.ridgeH : null, ov: isFinite(+a.ov) && a.ov != null ? Math.min(1.5, Math.max(0, +a.ov)) : 0.5, parts, facades: Array.isArray(a.facades) ? a.facades : [] };
+  return { fp: cleanPoly(a.fp), roof, ridgeDir: a.ridgeDir === 'x' ? 'x' : 'z', ridgeH: isFinite(+a.ridgeH) ? +a.ridgeH : null, ov: isFinite(+a.ov) && a.ov != null ? Math.min(1.5, Math.max(0, +a.ov)) : 0.5, parts, facades: Array.isArray(a.facades) ? a.facades : [], ...(a.res ? { res: a.res } : {}) };
 }
 // promjena mjera na specifikaciji (širina/dubina rastežu obris; dijelovi se zamjenjuju ako su zadani)
 export function specWithDims(spec, d = {}) {
@@ -144,13 +144,15 @@ export function specWithDims(spec, d = {}) {
   const sx = W / (b.x1 - b.x0), sz = D / (b.z1 - b.z0);
   sp.fp = sp.fp.map(([x, z]) => [x * sx, z * sz]);
   if (Array.isArray(d.parts)) sp.parts = d.parts;
+  if (Array.isArray(d.sides)) sp.facades = sp.facades.map((f, i) => (['gore', 'desno', 'dolje', 'lijevo'].includes(d.sides[i]) ? { ...f, side: d.sides[i] } : f));
   if (d.ov != null && isFinite(+d.ov)) sp.ov = +d.ov;
   if (d.roof) sp.roof = d.roof;
   if (d.pitch != null && isFinite(+d.pitch)) sp.pitch = Math.min(55, Math.max(5, +d.pitch));
   return normSpecKeep(sp);
 }
 const normSpecKeep = (sp) => ({ ...normSpec(sp), pitch: sp.pitch });
-export function modelFromAi(a0) {
+export const modelFromAi = (a0) => assembleAi(a0).m;
+function assembleAi(a0) {
   const a = normSpecKeep(a0), flatTop = a.roof === 'flat', nP = a.parts.length;
   let fp0 = a.fp; if (fp0.length < 3) throw new Error('Obris zgrade nije prepoznat.');
   // obrisi dijelova u koordinatama tlocrta (prije moguće rotacije): gornji dio = pravokutnik uvučen od dijela ispod
@@ -177,6 +179,7 @@ export function modelFromAi(a0) {
   // otvori: pročelje je nacrtano preko cijele širine podnožja; dio zgrade se bira po visini otvora
   const b0 = bbox({ fp: F[0] }), DIR = { gore: [0, -1], desno: [1, 0], dolje: [0, 1], lijevo: [-1, 0] };
   const geo = vols.map((v) => { const E = edges(v); return { v, E, N: E.map((e) => outward(v, e)) }; });
+  let dropped = 0;
   a.facades.forEach((f) => {
     const sd = sideOf(f.side), d = DIR[sd]; if (!d) return;
     const horiz = d[0] === 0, lo = horiz ? b0.x0 : b0.z0, span = horiz ? b0.x1 - b0.x0 : b0.z1 - b0.z0, inc = sd === 'dolje' || sd === 'lijevo';
@@ -185,21 +188,131 @@ export function modelFromAi(a0) {
     const outK = (e) => (horiz ? (e.p[1] + e.q[1]) / 2 * d[1] : (e.p[0] + e.q[0]) / 2 * d[0]);
     (Array.isArray(f.openings) ? f.openings : []).forEach((o) => {
       const x = Math.min(1, Math.max(0, +o.x)); if (!isFinite(x)) return;
-      const w = Math.min(8, Math.max(0.4, +o.w > 0 ? +o.w : 1.2)), hh = Math.min(5, Math.max(0.4, +o.h > 0 ? +o.h : 1.3)), c = lo + (inc ? x : 1 - x) * span, sAbs = Math.max(0, isFinite(+o.s) ? +o.s : 0.9);
+      const t = o.t === 'vrata' ? 'door' : o.t === 'klizna' ? 'slide' : 'win', wide = t === 'slide' && +o.w > 6; // izlog: široka ostakljena stijena, dijeli se na polja
+      const w = Math.min(wide ? 30 : 8, Math.max(0.4, +o.w > 0 ? +o.w : 1.2)), c0 = lo + (inc ? x : 1 - x) * span, sAbs = Math.max(0, isFinite(+o.s) ? +o.s : 0.9);
       const g = geo.slice().reverse().find((q) => q.v.y0 <= sAbs + 0.3) || geo[0], v = g.v;
-      const cand = facesOf(g).filter((e) => { const a0 = horiz ? e.p[0] : e.p[1], a1 = horiz ? e.q[0] : e.q[1]; return c >= Math.min(a0, a1) + w / 2 + 0.1 && c <= Math.max(a0, a1) - w / 2 - 0.1; }).sort((p, q) => outK(q) - outK(p));
-      if (!cand.length) return;
-      const e = cand[0], a0 = horiz ? e.p[0] : e.p[1], a1 = horiz ? e.q[0] : e.q[1], t = o.t === 'vrata' ? 'door' : o.t === 'klizna' ? 'slide' : 'win';
+      // očitanje položaja nije točno u centimetar: otvor koji do 1 m viri preko ruba zida pomiče se unutra
+      const fitC = (e) => { const a0 = horiz ? e.p[0] : e.p[1], a1 = horiz ? e.q[0] : e.q[1], mn = Math.min(a0, a1) + w / 2 + 0.2, mx = Math.max(a0, a1) - w / 2 - 0.2; return mx < mn || c0 < mn - 1 || c0 > mx + 1 ? null : Math.min(mx, Math.max(mn, c0)); };
+      const cand = facesOf(g).filter((e) => fitC(e) != null).sort((p, q) => outK(q) - outK(p));
+      if (!cand.length) { dropped++; return; }
+      const e = cand[0], c = fitC(e), a0 = horiz ? e.p[0] : e.p[1], a1 = horiz ? e.q[0] : e.q[1];
       let sill = Math.max(0, sAbs - v.y0);
       if (t !== 'win') sill = v.levels.reduce((best, L) => (Math.abs(L - sill) < Math.abs(best - sill) ? L : best), 0);
-      const op = { e: e.i, u: rd((c - a0) / (a1 - a0) * e.L), w: rd(w), h: rd(hh), s: rd(sill), t };
-      if (!v.openings.some((q) => q.e === op.e && Math.abs(q.u - op.u) < (q.w + op.w) / 2 + 0.1 && q.s < op.s + op.h && op.s < q.s + q.h)) v.openings.push(op);
+      const wallH = v.roof.type === 'flat' ? v.eave : v.eave - 0.2, hAll = Math.min(Math.max(0.4, +o.h > 0 ? +o.h : 1.3), Math.max(0.6, wallH - sill - 0.35));
+      const nV = hAll > 5 ? Math.ceil(hAll / 3.2) : 1, ph = hAll / nV; // ostakljenje preko više etaža (stubište): polja jedno iznad drugog
+      const nH = wide ? Math.ceil(w / 4) : 1, pw = w / nH;
+      for (let kv = 0; kv < nV; kv++) for (let kh = 0; kh < nH; kh++) {
+        const ck = c - w / 2 + (kh + 0.5) * pw, op = { e: e.i, u: rd((ck - a0) / (a1 - a0) * e.L), w: rd(nH > 1 ? pw - 0.14 : w), h: rd(nV > 1 ? ph - 0.3 : hAll), s: rd(sill + kv * ph), t };
+        if (!v.openings.some((q) => q.e === op.e && Math.abs(q.u - op.u) < (q.w + op.w) / 2 + 0.1 && q.s < op.s + op.h && op.s < q.s + q.h)) v.openings.push(op);
+      }
     });
   });
   vols.forEach((v) => edges(v).forEach((e) => { v.labels[e.i] ||= 'Pročelje ' + (e.i + 1); }));
   const m = { v: 3, src: 'ai', ...vols[0], balcony: null, canopy: null, chimneys: [], colors: { ...DEFAULT_COLORS } };
   if (nP > 1) m.vols = vols.slice(1);
-  return m;
+  return { m, dropped };
+}
+
+/* ---------- usklađivanje pročelja (AI često zamijeni strane) i položaja gornjih dijelova ---------- */
+export const SIDES = ['gore', 'desno', 'dolje', 'lijevo'];
+// strana svijeta iz naziva pročelja u stupnjevima (sjever 0, istok 90, jug 180, zapad 270); null ako je u nazivu nema
+export function compassOf(name) {
+  const s = String(name || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const T = [[/SJEVERO\s*-?\s*ISTO|NORTH\s*-?\s*EAST|NORDOST/, 45], [/SJEVERO\s*-?\s*ZAPAD|NORTH\s*-?\s*WEST|NORDWEST/, 315], [/JUGO\s*-?\s*ISTO|SOUTH\s*-?\s*EAST|SUDOST/, 135], [/JUGO\s*-?\s*ZAPAD|SOUTH\s*-?\s*WEST|SUDWEST/, 225],
+    [/\bSI\b/, 45], [/\bSZ\b/, 315], [/\bJI\b/, 135], [/\bJZ\b/, 225], [/SJEVER|NORTH|NORD/, 0], [/ISTO[CK]|EAST|\bOST/, 90], [/JUG|JUZN|SOUTH|SUD/, 180], [/ZAPAD|WEST/, 270]];
+  for (const [re, a] of T) if (re.test(s)) return a;
+  return null;
+}
+// dio tlocrta [os, od, do] koji pročelje na zadanoj strani pokazuje između udjela x0 i x1 svoje širine (gledano izvana)
+function spanOnPlan(side, b, x0, x1) {
+  const W = b.x1 - b.x0, D = b.z1 - b.z0;
+  if (side === 'dolje') return ['x', b.x0 + x0 * W, b.x0 + x1 * W];
+  if (side === 'gore') return ['x', b.x0 + (1 - x1) * W, b.x0 + (1 - x0) * W];
+  if (side === 'lijevo') return ['z', b.z0 + x0 * D, b.z0 + x1 * D];
+  return ['z', b.z0 + (1 - x1) * D, b.z0 + (1 - x0) * D];
+}
+// Položaj gornjih dijelova: veličina s tlocrta, položaj s pročelja. Pročelje pokazuje gdje gornji dio stoji
+// (izričito: f.upper [{part, x0, x1}], ili posredno: prozori gornjih etaža moraju pasti na njegov zid).
+function fitParts(sp) {
+  const b = bbox({ fp: sp.fp }), rects = [{ x: [b.x0, b.x1], z: [b.z0, b.z1] }], parts = sp.parts.map((p) => ({ ...p })), r5 = (v) => Math.round(v * 20) / 20;
+  let moved = 0, y0 = 0;
+  for (let i = 1; i < parts.length; i++) {
+    y0 += sp.parts[i - 1].heights.reduce((s, h) => s + h, 0);
+    const y1 = y0 + sp.parts[i].heights.reduce((s, h) => s + h, 0), par = rects[i - 1], n = sp.parts[i].inset || {}, rect = {};
+    for (const ax of ['x', 'z']) {
+      const dim = par[ax][1] - par[ax][0], plan = ax === 'x' ? [par.x[0] + (n.l || 0), par.x[1] - (n.d || 0)] : [par.z[0] + (n.g || 0), par.z[1] - (n.dl || 0)];
+      if (plan[1] - plan[0] < 3) plan[1] = Math.min(par[ax][1], plan[0] + 3);
+      const expl = []; let cov = null;
+      for (const f of sp.facades) {
+        if (!SIDES.includes(f.side) || ((f.side === 'gore' || f.side === 'dolje') ? 'x' : 'z') !== ax) continue;
+        const u = (Array.isArray(f.upper) ? f.upper : []).find((q) => +q.part === i + 1 && +q.x1 - +q.x0 > 0.03);
+        if (u) { const [, lo, hi] = spanOnPlan(f.side, b, Math.max(0, +u.x0), Math.min(1, +u.x1)); expl.push([lo, hi]); }
+        for (const o of Array.isArray(f.openings) ? f.openings : []) {
+          const s = +o.s, x = +o.x; if (!isFinite(s) || !isFinite(x) || s < y0 - 0.3 || s >= y1 - 0.3) continue;
+          const w = Math.min(o.t === 'klizna' && +o.w > 6 ? 30 : 8, Math.max(0.4, +o.w > 0 ? +o.w : 1.2)), [, c] = spanOnPlan(f.side, b, x, x);
+          cov = cov ? [Math.min(cov[0], c - w / 2), Math.max(cov[1], c + w / 2)] : [c - w / 2, c + w / 2];
+        }
+      }
+      let [lo, hi] = plan; const size = hi - lo;
+      if (expl.length) {
+        lo = expl.reduce((s, e) => s + e[0], 0) / expl.length; hi = expl.reduce((s, e) => s + e[1], 0) / expl.length;
+        if (Math.abs(hi - lo - size) <= Math.max(1.5, 0.08 * dim)) { const c = (lo + hi) / 2; lo = c - size / 2; hi = c + size / 2; } // mjera s tlocrta (kote) je točnija
+      } else if (cov && (cov[0] < lo - 0.2 || cov[1] > hi + 0.2)) {
+        const sh = cov[1] + 0.3 > hi ? cov[1] + 0.3 - hi : cov[0] - 0.3 - lo; lo += sh; hi += sh;
+        lo = Math.min(lo, cov[0] - 0.3); hi = Math.max(hi, cov[1] + 0.3);
+      }
+      if (lo !== plan[0] || hi !== plan[1]) { // pomaknuti dio se poravnava s rubom donjeg dijela ako mu je blizu
+        const snap = 0.03 * dim + 0.5, dHi = par[ax][1] - hi, dLo = par[ax][0] - lo;
+        if (Math.abs(dHi) < snap && Math.abs(dHi) <= Math.abs(dLo)) { lo += dHi; hi += dHi; } else if (Math.abs(dLo) < snap) { lo += dLo; hi += dLo; }
+        if (cov) { lo = Math.min(lo, cov[0] - 0.1); hi = Math.max(hi, cov[1] + 0.1); }
+      }
+      lo = Math.max(par[ax][0], lo); hi = Math.min(par[ax][1], hi); if (hi - lo < 3) { lo = plan[0]; hi = plan[1]; }
+      moved += Math.abs((lo + hi) - (plan[0] + plan[1])) / 2 / dim; rect[ax] = [lo, hi];
+    }
+    rects.push(rect);
+    parts[i].inset = { g: r5(rect.z[0] - par.z[0]), d: r5(par.x[1] - rect.x[1]), dl: r5(par.z[1] - rect.z[1]), l: r5(rect.x[0] - par.x[0]) };
+  }
+  return { parts, moved };
+}
+// Usklađuje strane pročelja i položaj gornjih dijelova tako da se nacrti međusobno slažu:
+// strane svijeta u nazivima idu u krug (SI → JI → JZ → SZ), nacrtana širina pročelja odgovara širini ili dubini tlocrta,
+// a prozori i izlozi moraju pasti na stvarne zidove. Vraća { spec, notes[], changed }.
+export function resolveSpec(spec0) {
+  const sp = normSpecKeep(spec0), b = bbox({ fp: sp.fp }), W = b.x1 - b.x0, D = b.z1 - b.z0, notes = [];
+  const F = sp.facades = sp.facades.map((f) => ({ ...f, sideAi: f.sideAi !== undefined ? f.sideAi : SIDES.includes(f.side) ? f.side : null }));
+  sp.res = 1;
+  if (!F.length) return { spec: sp, notes, changed: false };
+  const groups = [];
+  F.forEach((f, i) => { const ang = compassOf(f.name), k = ang != null ? 'c' + ang : f.name ? 'n' + String(f.name).trim().toUpperCase() : 'i' + i; let g = groups.find((q) => q.k === k); if (!g) groups.push(g = { k, ang, ix: [] }); g.ix.push(i); });
+  let best = null;
+  if (groups.length <= 4) {
+    let cands = []; const rec = (as) => { if (as.length === groups.length) return cands.push(as); for (let k = 0; k < 4; k++) if (!as.includes(k)) rec([...as, k]); }; rec([]);
+    const okC = (as) => groups.every((g, i) => groups.every((h, j) => { if (j <= i || g.ang == null || h.ang == null) return true; const da = ((h.ang - g.ang) % 360 + 360) % 360; return da % 90 ? true : ((as[j] - as[i]) % 4 + 4) % 4 === da / 90; }));
+    const cc = cands.filter(okC); if (cc.length) cands = cc;
+    const skew = Math.abs(W - D) / Math.max(W, D) > 0.15;
+    for (const as of cands) {
+      const fac = F.map((f) => ({ ...f })); groups.forEach((g, gi) => g.ix.forEach((i) => { fac[i].side = SIDES[as[gi]]; }));
+      const fit = fitParts({ ...sp, facades: fac }), trial = { ...sp, parts: fit.parts, facades: fac };
+      let score = -0.5 * assembleAi(trial).dropped - Math.min(1, fit.moved);
+      const cg = groups.map((g, gi) => (g.ang == null ? null : Math.cos((g.ang - 90 * as[gi]) * Math.PI / 180))).filter((v) => v != null);
+      if (cg.length) score += 0.3 * cg.reduce((x, y) => x + y, 0) / cg.length; // bez drugih dokaza: sjever je na nacrtu najčešće gore
+      for (const f of fac) {
+        const hz = f.side === 'gore' || f.side === 'dolje', exp = hz ? W : D, oth = hz ? D : W;
+        if (f.sideAi && f.side === f.sideAi) score += 1;
+        if (skew && +f.width > 2) { const a = Math.abs(f.width - exp) / exp, o = Math.abs(f.width - oth) / oth; if (a < 0.12 && o > 0.12) score += 2; else if (o < 0.12 && a > 0.12) score -= 2; }
+        for (const o of Array.isArray(f.openings) ? f.openings : []) { const c = +o.x * exp, w = +o.w > 0 ? +o.w : 1.2; if (isFinite(c) && (c - w / 2 < -1.2 || c + w / 2 > exp + 1.2)) score -= 1.5; } // otvor koji viri izvan pročelja: kriva strana
+      }
+      if (!best || score > best.score + 1e-9) best = { score, trial };
+    }
+  }
+  if (!best) { const fit = fitParts(sp); best = { trial: { ...sp, parts: fit.parts } }; }
+  const out = normSpecKeep({ ...best.trial, res: 1 }), fq = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+  const ch = out.facades.filter((f) => f.sideAi && f.side !== f.sideAi);
+  if (ch.length) notes.push(`strane pročelja uskladio sam po stranama svijeta i položaju otvora: ${out.facades.map((f) => `${f.name || 'pročelje'} → ${f.side}`).join(', ')} (AI je za ${ch.map((f) => `${f.name || 'pročelje'} pročitao „${f.sideAi}”`).join(', ')})`);
+  let insCh = false;
+  out.parts.forEach((p, i) => { const a = sp.parts[i].inset; if (!a || !p.inset) return; if (['g', 'd', 'dl', 'l'].some((k) => Math.abs(p.inset[k] - a[k]) > 0.3)) { insCh = true; notes.push(`položaj dijela „${p.name}” uskladio sam s pročeljima: uvučeno gore ${fq(p.inset.g)} · desno ${fq(p.inset.d)} · dolje ${fq(p.inset.dl)} · lijevo ${fq(p.inset.l)} m (s tlocrta je bilo pročitano gore ${fq(a.g)} · desno ${fq(a.d)} · dolje ${fq(a.dl)} · lijevo ${fq(a.l)} m)`); } });
+  const sideCh = out.facades.some((f, i) => f.side !== spec0.facades?.[i]?.side), insIn = out.parts.some((p, i) => p.inset && ['g', 'd', 'dl', 'l'].some((k) => Math.abs(p.inset[k] - (+spec0.parts?.[i]?.inset?.[k] || 0)) > 0.3));
+  return { spec: out, notes, changed: sideCh || insIn };
 }
 // pomoćno za zgrade iz više dijelova
 export const volsOf = (m) => [m, ...(m.vols || [])];
