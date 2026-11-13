@@ -270,6 +270,10 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 .v3d-empty h2 { font-family: var(--f-display); font-size: 21px; margin: 0; }
 .v3d-empty p { margin: 0; line-height: 1.5; }
 .v3d-empty .btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.part { border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; display: flex; flex-direction: column; gap: 5px; background: var(--panel); }
+.part b { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.part .pn { flex: 1; min-width: 0; border: 0; border-bottom: 1px dashed var(--line); background: none; color: var(--ink); font: inherit; font-weight: 600; padding: 2px 0; }
+.part .pn:focus { outline: none; border-bottom-color: var(--accent); }
 .dims { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; margin-top: 4px; }
 .dims label { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--muted); }
 .dims input { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--panel); color: var(--ink); width: 100%; min-width: 0; font-family: var(--f-mono); font-size: 13.5px; }
@@ -325,7 +329,7 @@ td.pc .dot-ai, td.pc .dot-kat { position: absolute; left: 3px; top: 16px; margin
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.8</small></div>
+  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.9</small></div>
   <button class="proj-btn" id="projBtn" aria-haspopup="true"><span id="projName">Projekt</span> ▾</button>
   <div class="seg" role="group" aria-label="Uloga">
     <button id="roleP" aria-pressed="true">Projektant</button>

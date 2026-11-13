@@ -37,3 +37,8 @@
 - AI čitanje nacrta: slike idu preko `cap.sample(..., { images })` (alati ne mogu vraćati slike); kote se šalju kao tekst s položajem.
 - `cap.sample` prima najviše 4 slike po upitu (`cap.maxImages`): `aiBuildModel` zato ide u koracima (stranice → obris →
   visine i krov → otvori po dva pročelja), s međurezultatima u `aiMemo` da ponovni pokušaj nastavi gdje je stao.
+- Više dijelova (v0.9): `P.modelSpec` {fp, roof, ridgeDir, ov, parts[{name, floors, heights[], inset{g,d,dl,l}}], facades[]} je
+  izvor istine za AI model; `MD.modelFromAi(spec)` slaže `P.model` (podnožje) + `P.model.vols[]` (gornji dijelovi s `y0`,
+  `levels`, vlastitim `openings`). Mjere se mijenjaju samo kroz `specWithDims` → `setObjekt`. Kod uvijek ide kroz
+  `volsOf(m)`, `levelsOf(v)`, `floorsAll(m)`, `topOf(m)`; krov iz odabira nosi najgornji dio, niži imaju ravni krov (terasu).
+  U 3D-u se gornji dio gradi u grupi `this.cur` podignutoj na `y0`. Stari AI modeli bez `modelSpec` idu preko `modelBase`.

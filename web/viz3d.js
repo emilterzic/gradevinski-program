@@ -14,7 +14,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { SimplexNoise } from 'three/addons/math/SimplexNoise.js';
 
-import { DEFAULT_COLORS, COLOR_PRESETS, demoModel, autoModel, edges, bbox, centroid, outward, offsetPoly, roofGeom, wallBreaks, openingsIn, normBuild, optOf, BUILD_KEYS } from './model.js';
+import { DEFAULT_COLORS, COLOR_PRESETS, demoModel, autoModel, edges, bbox, centroid, outward, offsetPoly, roofGeom, wallBreaks, openingsIn, normBuild, optOf, BUILD_KEYS, levelsOf, topOf } from './model.js';
 export { DEFAULT_COLORS, COLOR_PRESETS, demoModel, autoModel };
 
 /* ---------- proceduralne teksture (boja + reljef) ---------- */
@@ -401,7 +401,7 @@ export class Viz3D {
     };
     return M;
   }
-  add(mesh, part, minStage = 0, maxStage = 9) { mesh.traverse((o) => { o.castShadow = !o.userData.noShadow; o.receiveShadow = true; }); mesh.userData = { part, minStage, maxStage }; this.root.add(mesh); this.parts.push(mesh); return mesh; }
+  add(mesh, part, minStage = 0, maxStage = 9) { mesh.traverse((o) => { o.castShadow = !o.userData.noShadow; o.receiveShadow = true; }); mesh.userData = { part, minStage, maxStage }; (this.cur || this.root).add(mesh); this.parts.push(mesh); return mesh; }
   box(w, h, d, mat, x, y, z, part, s0, s1) { const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); g.position.set(x, y, z); return this.add(g, part, s0, s1); }
   // greda između dviju točaka (letve, rubni crijep, ograde)
   beam(a, b, w, h, mat, part, s0, s1) { const d = new THREE.Vector3().subVectors(b, a), L = d.length(); const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, L), mat); g.position.copy(a).addScaledVector(d, 0.5); g.lookAt(b); return this.add(g, part, s0, s1); }
@@ -416,7 +416,8 @@ export class Viz3D {
     const m = model, B = this.B, G = this.G = roofGeom(m), M = this.M = this.mats(m), E = edges(m), b = bbox(m), [cx, cz] = centroid(m);
     this.ops = openingsIn(m, G);
     // veći objekt (stambena zgrada): šire područje sjena, dalja kamera i sunce
-    const big = Math.max(b.x1 - b.x0, b.z1 - b.z0, G.top), R = Math.max(20, big * 1.25 + 6), sc = this.sunLight.shadow.camera;
+    this.topH = topOf(m); this.cur = null;
+    const big = Math.max(b.x1 - b.x0, b.z1 - b.z0, this.topH), R = Math.max(20, big * 1.25 + 6), sc = this.sunLight.shadow.camera;
     this.scaleK = Math.max(1, big / 10); this.sunD = Math.max(60, R * 2.4);
     sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R; sc.far = this.sunD * 2; sc.updateProjectionMatrix();
     this.controls.maxDistance = Math.max(90, big * 7);
@@ -430,7 +431,8 @@ export class Viz3D {
     // traka uz zid (rov, trakasti temelj, vezna greda)
     const strip = (e, w, h, y, mat, part, s0, s1, inset) => { const [nx, nz] = outward(m, e); const g = this.box(e.L + w * 0.5, h, w, mat, (e.p[0] + e.q[0]) / 2 - nx * inset, y, (e.p[1] + e.q[1]) / 2 - nz * inset, part, s0, s1); g.rotation.y = -Math.atan2(e.dz, e.dx); return g; };
     // stupna mjesta: uglovi + razmak do 5 m (temelji samci, vertikalni serklaži, AB stupovi)
-    const posts = []; E.forEach((e) => { const k = Math.max(0, Math.ceil(e.L / 5) - 1); for (let i = 0; i <= k; i++) posts.push({ e, u: e.L * i / (k + 1) }); });
+    const postsOf = (EE) => { const out = []; EE.forEach((e) => { const k = Math.max(0, Math.ceil(e.L / 5) - 1); for (let i = 0; i <= k; i++) out.push({ e, u: e.L * i / (k + 1) }); }); return out; };
+    const posts = postsOf(E);
     const padAt = (p, w, h, y, mat, part, s0, s1) => { const [nx, nz] = outward(m, p.e); const g = this.box(w, h, w, mat, p.e.p[0] + p.e.dx * p.u - nx * 0.2, y, p.e.p[1] + p.e.dz * p.u - nz * 0.2, part, s0, s1); g.rotation.y = -Math.atan2(p.e.dz, p.e.dx); return g; };
     // faza 0: iskop (rovovi, jama za ploču ili jame za samce)
     this.box(b.x1 - b.x0 + 3, 0.02, b.z1 - b.z0 + 3, M.soil, cx, 0.0, cz, 'iskop', 0, 0);
@@ -442,13 +444,27 @@ export class Viz3D {
     else if (B.temelji === 'samci') { posts.forEach((p) => padAt(p, 1.2, 0.4, 0.1, M.concrete, 'temelji', 1, 1)); E.forEach((e) => strip(e, 0.3, 0.3, 0.14, M.concrete, 'temelji', 1, 1, 0.2)); }
     else E.forEach((e) => strip(e, 0.6, 0.35, 0.12, M.concrete, 'temelji', 1, 1, 0.2));
     slab(0.15, 0.15, M.concrete, 'temelji', 1, 9);
-    for (let f = 1; f < m.floors; f++) slab(f * m.storeyH, 0.2, M.concrete, 'konstrukcija', 2, 3);
+    levelsOf(m).slice(1).forEach((y) => slab(y, 0.2, M.concrete, 'konstrukcija', 2, 3));
     if (G.kind === 'flat') slab(m.eave, 0.2, M.concrete, 'konstrukcija', 2, 9); else slab(m.eave - 0.02, 0.2, M.concrete, 'konstrukcija', 2, 2);
     // zidovi (sa serklažima ili stupovima), krov, dimnjaci
     this.struct = new THREE.Group();
     E.forEach((e) => this.wall(m, e, posts.filter((p) => p.e === e)));
     if (this.struct.children.length) this.add(mergeMeshes(this.struct), 'konstrukcija', 2, 3);
+    const vols = m.vols || []; this.topVol = vols.length ? vols[vols.length - 1] : m;
     this.roof(m, flatPoly);
+    // gornji dijelovi zgrade (uvučeni katovi): vlastiti obris, razine i krov, podignuti na svoju visinu
+    vols.forEach((v) => {
+      const grp = new THREE.Group(); grp.position.y = v.y0; this.root.add(grp); this.cur = grp;
+      this.G = roofGeom(v); this.ops = openingsIn(v, this.G);
+      const inV = offsetPoly(v, -0.02), EV = edges(v), pv = postsOf(EV);
+      levelsOf(v).forEach((y, i) => flatPoly(inV, y + (i ? 0 : 0.02), 0.2, M.concrete, 'konstrukcija', 2, i ? 3 : 9));
+      if (this.G.kind === 'flat') flatPoly(inV, v.eave, 0.2, M.concrete, 'konstrukcija', 2, 9); else flatPoly(inV, v.eave - 0.02, 0.2, M.concrete, 'konstrukcija', 2, 2);
+      this.struct = new THREE.Group();
+      EV.forEach((e) => this.wall(v, e, pv.filter((p) => p.e === e)));
+      if (this.struct.children.length) this.add(mergeMeshes(this.struct), 'konstrukcija', 2, 3);
+      this.roof(v, flatPoly);
+    });
+    this.cur = null; this.G = G; this.ops = openingsIn(m, G);
     (m.chimneys || []).forEach((c) => {
       const base = G.H(c.x, c.z) - 0.3, top = Math.max(c.top, base + 1.3);
       this.box(c.s, top - base, c.s, M.render, c.x, (top + base) / 2, c.z, 'krov', 3, 9);
@@ -556,12 +572,12 @@ export class Viz3D {
         if (u > 0) { const hit = ops.find((o) => Math.abs(u - o.u) < o.w / 2 + cw / 2 + 0.05); if (hit) u = hit.u - hit.w / 2 - cw / 2 - 0.08; if (u < cw * 1.5 || ops.some((o) => Math.abs(u - o.u) < o.w / 2 + cw / 2)) return; }
         const hgt = top(u) - 0.02, g = new THREE.Mesh(new THREE.BoxGeometry(cw, hgt, cw), M.concrete); g.position.set(p.u === 0 ? cw / 2 - pr : u, hgt / 2, cw / 2 - pr); sg.add(g);
       });
-      const levels = []; for (let f = 1; f < m.floors; f++) levels.push(f * m.storeyH); levels.push(m.eave - 0.03);
+      const levels = levelsOf(m).slice(1); levels.push(m.eave - 0.03);
       levels.forEach((y) => freeSegs(y - bh, y).forEach(([s0, s1]) => { if (s1 - s0 < 0.1) return; const g = new THREE.Mesh(new THREE.BoxGeometry(s1 - s0, bh, 0.05), M.concrete); g.position.set((s0 + s1) / 2, y - bh / 2, 0.025 - pr); sg.add(g); }));
       this.struct.add(place(sg));
     }
     // podnožje (cokl) izvan zida, prekinuto kod vrata
-    freeSegs(0, m.base).forEach(([s0, s1]) => { const g = new THREE.Mesh(new THREE.BoxGeometry(s1 - s0 + 0.06, m.base, 0.05), M.cokl); g.position.set((s0 + s1) / 2, m.base / 2, -0.025); this.add(place(g), 'fasada', 4, 9); });
+    if (m.base > 0) freeSegs(0, m.base).forEach(([s0, s1]) => { const g = new THREE.Mesh(new THREE.BoxGeometry(s1 - s0 + 0.06, m.base, 0.05), M.cokl); g.position.set((s0 + s1) / 2, m.base / 2, -0.025); this.add(place(g), 'fasada', 4, 9); });
     // ravni krov: limena poklopnica atike
     if (G.kind === 'flat') { const g = new THREE.Mesh(new THREE.BoxGeometry(e.L + 0.12, 0.05, T + 0.1), M.metal); g.position.set(e.L / 2, top(0) + 0.025, T / 2); this.add(place(g), 'limarija', 4, 9); }
     // stolarija s krilima, staklom, unutrašnjošću prostorije i zavjesama
@@ -603,7 +619,7 @@ export class Viz3D {
     if (G.kind === 'flat') {
       const inner = offsetPoly(m, -m.wallT);
       flatPoly(inner, m.eave + 0.1, 0.1, M.xps, 'krov', 3, 3);
-      flatPoly(inner, m.eave + 0.16, 0.16, M.cover, 'krov', 4, 9);
+      flatPoly(inner, m.eave + 0.16, 0.16, m === this.topVol ? M.cover : M.gravel, 'krov', 4, 9);
       return;
     }
     const V3 = (p, dy = 0) => new THREE.Vector3(p[0], H(p[0], p[1]) + dy, p[1]);
@@ -656,7 +672,7 @@ export class Viz3D {
   setStage(s) { this.stage = s; this.parts.forEach((p) => { const u = p.userData; p.visible = s >= u.minStage && s <= u.maxStage; }); this.invalidateShadows(); }
   // promjena boje mijenja samo materijale (bez ponovne izgradnje modela)
   setColors(c) { Object.assign(this.model.colors, c); Object.entries(this.byColor).forEach(([k, mats]) => { const v = this.model.colors[k] || DEFAULT_COLORS[k]; mats.forEach((mt) => mt.color.set(v)); }); this.needFull = true; }
-  frameBox() { const b = bbox(this.model); return { cx: (b.x0 + b.x1) / 2, cz: (b.z0 + b.z1) / 2, r: Math.max(b.x1 - b.x0, b.z1 - b.z0), h: Math.max(...(this.model.chimneys || []).map((c) => c.top), this.G.top) }; }
+  frameBox() { const b = bbox(this.model); return { cx: (b.x0 + b.x1) / 2, cz: (b.z0 + b.z1) / 2, r: Math.max(b.x1 - b.x0, b.z1 - b.z0), h: Math.max(...(this.model.chimneys || []).map((c) => c.top), this.topH) }; }
   // arhitektonska perspektiva: kamera gleda vodoravno (vertikale ostaju ravne)
   view(kind, instant) {
     const f = this.frameBox(), eye = f.h * 0.5, tgt = new THREE.Vector3(f.cx, eye, f.cz);
