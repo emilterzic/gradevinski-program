@@ -1,4 +1,4 @@
-// Građevinski program – prototip v0.14
+// Građevinski program – prototip v0.15
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -1210,6 +1210,18 @@ async function aiBuildModel() {
     const memo = (aiMemo[P.docId] ||= {}), MAXI = cap.maxImages || 4;
     say(`Slažem 3D model iz dokumenta „${P.pdf.name}”. 1/6: biram stranice (tlocrt, presjek, pročelja)…`);
     if (!memo.pick) {
+      // skenirani ili „spljošteni” nacrti nemaju tekst: stranice se tada razvrstavaju po izgledu, a mjerilo čita sa slike
+      const nums = Object.keys(pageInfo).map(Number).sort((x, y) => x - y);
+      if (nums.filter((n) => pageInfo[n].text.replace(/\s/g, '').length < 40).length > nums.length * 0.5) {
+        memo.vis ||= {};
+        const todo = nums.slice(0, 48);
+        for (let i = 0; i < todo.length; i += MAXI) {
+          const g = todo.slice(i, i + MAXI).filter((n) => !memo.vis[n]); if (!g.length) continue;
+          say(`1/6: dokument nema čitljiv tekst, razvrstavam stranice po izgledu (${g[0]}–${g[g.length - 1]} od ${nums.length})…`);
+          const r = await askJson('Priložene su stranice arhitektonskog projekta (slike redom). Za svaku sliku vrati {"stranice": [{"vrsta": "tlocrt prizemlja" | "tlocrt kata" | "tlocrt krova" | "tlocrt temelja" | "presjek" | "procelje" | "situacija" | "detalj" | "ostalo", "naslov": naslov crteža kako piše na listu, "mjerilo": broj N iz mjerila 1:N ili null}]} redom po slikama.', await Promise.all(g.map((n) => pageCropBlob(n, [0, 0, 1, 1], 1100))));
+          g.forEach((n, k) => { const q = (Array.isArray(r.stranice) ? r.stranice[k] : null) || {}; memo.vis[n] = q; pageInfo[n].title = String(q.naslov || q.vrsta || pageInfo[n].title).slice(0, 60); pageInfo[n].text = `${q.vrsta || ''} ${q.naslov || ''}`; const sc = +q.mjerilo; if (sc >= 20 && sc <= 1000 && !pageInfo[n].ratio) { pageInfo[n].ratio = sc; if (!P.pageScale[n]) P.pageScale[n] = { mPerPt: (0.0254 / 72) * sc, src: 'AI pročitao 1:' + sc + ' (provjeri)' }; } });
+        }
+      }
       const list = Object.entries(pageInfo).map(([n, i]) => `${n}. „${i.title}” ${i.ratio ? '1:' + i.ratio : ''} | ${i.text.slice(0, 170)}`).join('\n').slice(0, 14000);
       memo.pick = await askJson(`Ovo je popis stranica PDF-a iz projekta zgrade (broj, naslov, mjerilo, početak teksta sa stranice):\n${list}\n\nOdaberi stranice potrebne za 3D model vanjskog oblika zgrade. Vrati {"tlocrt": broj stranice tlocrta prizemlja (ili karakteristične etaže ako prizemlja nema), "tlocrtKata": broj stranice tlocrta karakterističnog kata iznad prizemlja ili null, "presjek": broj stranice presjeka ili null, "procelja": [brojevi stranica pročelja / fasada / pogleda cijele zgrade, najviše 4, bez detalja], "napomena": "kratko"}. Ako dokument ne sadrži tlocrt zgrade, vrati {"tlocrt": null, "napomena": "što dokument sadrži"}.`);
     }
@@ -1724,4 +1736,19 @@ async function boot() {
     else { await saveNow(); }
   } catch (e) { console.warn(e); setSave(cap.db ? 'Spremanje u oblak nije dostupno' : 'Nije spremljeno'); }
 }
-boot();
+// Testni način: projekti navedeni u dokumentu `aitest` čitaju se jedan po jedan, a rezultat ide u dnevnik `ailog_<projekt>`.
+// Služi provjeri AI čitanja na više stvarnih nacrta nakon svake izmjene programa.
+async function runAiTests() {
+  if (!cap.db || !cap.uid || !cap.sample) return;
+  const ref = cap.db.collection('data/users/' + cap.uid).doc('aitest'); let t;
+  try { const s = await ref.get(); if (!s.exists) return; t = s.data(); } catch { return; }
+  if (!Array.isArray(t.queue) || !t.queue.length) return;
+  const back = P.id;
+  while (t.queue.length) {
+    const id = t.queue[0]; let ok = false;
+    try { await saveNow(); await openProject(id); if (P.id === id && pdfDoc) { await aiBuildModel(); await saveNow(); ok = true; } } catch (e) { console.warn(e); }
+    t.queue.shift(); (t.done ||= []).push({ id, ok, t: Date.now() }); try { await ref.set(t); } catch (e) { console.warn(e); }
+  }
+  if (back && back !== P.id) await openProject(back);
+}
+boot().then(runAiTests);

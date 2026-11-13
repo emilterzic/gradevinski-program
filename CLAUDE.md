@@ -59,3 +59,6 @@
   (zadanih od ±0,00) oduzimaju `z0`. Popravak visine podnožja iz pročelja (`visinaPodnozja`) je u `aiBuildModel` prije slaganja.
 - Usklađivanje (v0.14): `resolveSpec` postavlja `res = 3`; proturječje s položajem s tlocrta (`fitParts().contra`) nosi −2,5 boda po osi.
   `P.specManual = true` nakon ručne izmjene dijelova ili strana: migracije i usklađivanje takav model ne mijenjaju. Migracija 10.
+- Testni skup (v0.15): vlasnik je 13. 11. dopustio da se kompleti nacrta iz njegove mape Downloads koriste za testiranje.
+  Testni projekti imaju id `test…` i naziv „Test: …”; pokreću se upisom id-eva u `data/users/<uid>/aitest.queue` (`runAiTests`).
+  Skenirani PDF (bez teksta): `aiBuildModel` u koraku 1 razvrstava stranice po izgledu i puni `pageInfo[n].title/text/ratio`.
