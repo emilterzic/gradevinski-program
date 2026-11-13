@@ -1,4 +1,4 @@
-// Građevinski program – prototip v0.15
+// Građevinski program – prototip v0.16
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -1340,7 +1340,17 @@ async function aiBuildModel() {
       }),
       facades: (Array.isArray(hv.procelja) ? hv.procelja : []).map((f) => ({ side: f.strana, name: f.naziv, width: num(f.sirina_m), upper: (Array.isArray(f.gornji) ? f.gornji : []).map((u) => ({ part: num(u.dio), x0: num(u.x0), x1: num(u.x1) })).filter((u) => u.part >= 2 && u.x1 > u.x0),
         openings: (Array.isArray(f.otvori) ? f.otvori : []).map((o) => ({ x: num(o.x), s: num(o.parapet), w: num(o.sirina), h: num(o.visina), t: o.vrsta })) })) }));
-    const spec = res.spec, base = MD.modelFromAi(spec);
+    let spec = res.spec;
+    { // mjera tlocrta koja nije potvrđena kotom (nečitljive kote na skenu) usklađuje se s nacrtanom širinom pročelja na toj strani
+      const bb = MD.bbox({ fp: spec.fp }), fix = {};
+      for (const [ax, dim, known] of [['W', bb.x1 - bb.x0, sw > 2], ['D', bb.z1 - bb.z0, sd > 2]]) {
+        const ws = spec.facades.filter((f) => f.width > 2 && ((f.side === 'gore' || f.side === 'dolje') === (ax === 'W'))).map((f) => f.width); if (known || !ws.length) continue;
+        const avg = ws.reduce((x, y) => x + y, 0) / ws.length, rel = avg / dim - 1;
+        if (Math.abs(rel) > 0.03 && Math.abs(rel) < 0.2 && Math.max(...ws) / Math.min(...ws) < 1.04) { fix[ax] = r2(avg); res.notes.push(`${ax === 'W' ? 'širinu' : 'dubinu'} tlocrta (${fq(r2(dim))} m, bez čitljive kote) uskladio sam s nacrtanom širinom pročelja: ${fq(r2(avg))} m`); }
+      }
+      if (fix.W || fix.D) spec = MD.specWithDims(spec, fix);
+    }
+    const base = MD.modelFromAi(spec);
     pushUndo();
     if (P.model?.colors) base.colors = P.model.colors;
     P.modelSpec = spec; P.specManual = undefined; P.modelBase = undefined; P.modelType = 'ai'; P.modelDims = undefined; P.model = base; MD.applyBuild(P.model, P.build);
@@ -1741,13 +1751,13 @@ async function boot() {
 async function runAiTests() {
   if (!cap.db || !cap.uid || !cap.sample) return;
   const ref = cap.db.collection('data/users/' + cap.uid).doc('aitest'); let t;
-  try { const s = await ref.get(); if (!s.exists) return; t = s.data(); } catch { return; }
+  try { const s = await ref.get(); if (!s.exists) return; t = JSON.parse(JSON.stringify(s.data())); } catch { return; } // kopija: podaci iz baze mogu biti nepromjenjivi
   if (!Array.isArray(t.queue) || !t.queue.length) return;
   const back = P.id;
   while (t.queue.length) {
     const id = t.queue[0]; let ok = false;
     try { await saveNow(); await openProject(id); if (P.id === id && pdfDoc) { await aiBuildModel(); await saveNow(); ok = true; } } catch (e) { console.warn(e); }
-    t.queue.shift(); (t.done ||= []).push({ id, ok, t: Date.now() }); try { await ref.set(t); } catch (e) { console.warn(e); }
+    t.queue = t.queue.slice(1); t.done = [...(t.done || []), { id, ok, t: Date.now() }]; try { await ref.set(t); } catch (e) { console.warn(e); }
   }
   if (back && back !== P.id) await openProject(back);
 }
