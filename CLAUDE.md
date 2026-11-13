@@ -47,3 +47,8 @@
   strane svijeta u nazivima samo kao blaga prednost, nikad kao uvjet) i postavlja `spec.res = 2`; izvorno očitana uvlaka ostaje
   u `parts[i].insetAi`. Zove se samo nakon AI čitanja i u migraciji 9, nikad nakon ručne izmjene.
   Ručno: `setObjekt(null, { parts, sides })`.
+- Balkoni i oblik (v0.11): `modelSpec.parts[i]` može imati `shape` (poligon u udjelima 0–1 pravokutnika dijela) i
+  `balconies[{side, x0, x1, d, floors[], rail: staklo|metal|zid}]` (x0/x1 u udjelima širine dijela na tlocrtu).
+  `MD.katToPart(obris, balkoni)` pretvara očitani tlocrt kata; `modelFromAi` slaže `v.balconies[{e, u, w, d, ys[], rail}]`,
+  3D ih crta u `balconyAt`. Atribut `data-bk` je zauzet za odluke izvedbe: redovi balkona koriste `data-bal`.
+  `cleanPoly` pomiče poligon u ishodište: ne koristiti ga za obrise koji moraju zadržati položaj.

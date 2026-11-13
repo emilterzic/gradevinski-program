@@ -1,4 +1,4 @@
-// Građevinski program – prototip v0.10
+// Građevinski program – prototip v0.11
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -1056,7 +1056,7 @@ function setObjekt(type, dims) {
   return n;
 }
 function objektHtml() {
-  const d = curDims(), T = typeOf(), Q = MD.quantities(P.model), sp = P.modelType === 'ai' && P.modelSpec ? P.modelSpec : null;
+  const d = curDims(), T = typeOf(), Q = MD.quantities(P.model), sp = P.modelType === 'ai' && P.modelSpec ? P.modelSpec : null, PB = sp ? MD.partBoxes(sp) : [];
   const F = [['W', 'Širina (m)'], ['D', 'Dubina (m)'], ['floors', 'Broj etaža'], ['storeyH', 'Visina etaže (m)'], ['pitch', 'Nagib krova (°)'], ['ov', 'Prepust krova (m)']];
   return `<details class="ogrp" data-g="objekt" ${openGrp.has('objekt') ? 'open' : ''}><summary><span class="gn">Objekt i dimenzije</span><span class="gv">${esc(T.n)}${P.model.resized ? ' (izmijenjeno)' : ''}</span><span class="gc">${fq(d.W)} × ${fq(d.D)} m · ${MD.etaze(d.floors)}</span></summary>
     <div class="opts">${MD.TYPES.filter((t) => (!t.demo || hasDemo()) && (!t.ai || P.modelBase || P.modelSpec)).map((t) => `<button class="opt" data-ty="${t.id}" aria-pressed="${t.id === T.id}"><span class="on">${esc(t.n)}</span><span class="pr">${t.d ? MD.etaze(t.d.floors) : ''}</span><span class="nt">${t.d ? `${fq(t.d.W)} × ${fq(t.d.D)} m, etaža ${fq(t.d.storeyH)} m` : esc(t.note)}</span></button>`).join('')}
@@ -1064,6 +1064,10 @@ function objektHtml() {
         ${sp.parts.map((p, i) => `<div class="part" data-part="${i}"><b>${i + 1}. <input class="pn" data-pf="name" value="${esc(p.name)}" aria-label="Naziv dijela"></b>
           <div class="dims"><label>Broj etaža<input data-pf="floors" inputmode="numeric" value="${p.floors}"></label><label>Visine etaža (m)<input data-pf="heights" value="${p.heights.map((h) => fq(h)).join(' / ')}" title="Visina svake etaže odozdo prema gore, odvojeno kosom crtom. Jedan broj vrijedi za sve etaže."></label>
           ${i ? [['g', 'Uvlaka gore (m)'], ['d', 'Uvlaka desno (m)'], ['dl', 'Uvlaka dolje (m)'], ['l', 'Uvlaka lijevo (m)']].map(([k, l]) => `<label>${l}<input data-pf="in_${k}" inputmode="decimal" value="${fq(p.inset[k])}"></label>`).join('') : ''}</div>
+          ${(p.balconies || []).length ? '<p class="note" style="margin:8px 0 0">Balkoni: strana tlocrta i ograda; ispod početak, kraj i istak u metrima te etaže.</p>' : ''}
+          ${(p.balconies || []).map((b, j) => { const hz = b.side === 'gore' || b.side === 'dolje', sp = (hz ? PB[i]?.W : PB[i]?.D) || 1; return `<div class="balk" data-bal="${j}"><select data-bf="side" title="Strana dijela na tlocrtu">${MD.SIDES.map((sd) => `<option ${b.side === sd ? 'selected' : ''}>${sd}</option>`).join('')}</select><select data-bf="rail" title="Ograda">${[['staklo', 'staklena'], ['metal', 'metalna'], ['zid', 'zidana']].map(([k, l]) => `<option value="${k}" ${b.rail === k ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="btn small" data-bkdel="${i}:${j}" title="Ukloni balkon">×</button>
+            <input data-bf="a" inputmode="decimal" value="${fq(r2(b.x0 * sp))}" title="Početak balkona u m, mjereno od ${hz ? 'lijevog' : 'gornjeg'} ruba dijela na tlocrtu"><input data-bf="b" inputmode="decimal" value="${fq(r2(b.x1 * sp))}" title="Kraj balkona u m"><input data-bf="d" inputmode="decimal" value="${fq(b.d)}" title="Istak balkona u m"><input data-bf="fl" value="${(b.floors || []).join(', ')}" placeholder="sve etaže" title="Etaže dijela na kojima je balkon (1 = najdonja); prazno = sve"></div>`; }).join('')}
+          <button class="btn small" data-bkadd="${i}">+ Balkon</button>
           ${i ? `<button class="btn small" data-pdel="${i}">Ukloni ovaj dio</button>` : ''}</div>`).join('')}
         ${sp.parts.length < 4 ? '<button class="btn small" id="pAdd">+ Dodaj uvučeni gornji dio</button>' : ''}
         ${sp.facades.length ? `<div class="part"><b>Pročelja s nacrta: na kojoj su strani tlocrta</b><div class="dims">${sp.facades.map((f, i) => `<label>${esc(String(f.name || 'Pročelje ' + (i + 1)).slice(0, 34))}<select data-fs="${i}">${MD.SIDES.map((sd) => `<option value="${sd}" ${f.side === sd ? 'selected' : ''}>${sd}</option>`).join('')}</select></label>`).join('')}</div></div>` : ''}`
@@ -1077,9 +1081,14 @@ function bindObjekt(side) {
   const after = (n, msg) => { render3D(); renderCounts(); toast(msg + (n ? ` Preračunato ${n} stavki izvedbe.` : '')); };
   $$('[data-ty]', side).forEach((b) => b.onclick = () => { openGrp.add('objekt'); const n = setObjekt(b.dataset.ty), T = typeOf(); after(n, `${T.n}: standardne dimenzije${T.build ? ' i uobičajena izvedba' : ''}.`); });
   const readParts = () => $$('[data-part]', side).map((el, i) => { const g = (k) => $(`[data-pf="${k}"]`, el)?.value ?? '', hs = g('heights').split(/[\/;]|\s+-\s+/).map((x) => parseNum(x.trim())).filter((v) => v > 0);
-    return { name: g('name'), floors: parseNum(g('floors')) || hs.length || 1, heights: hs, inset: i ? { g: parseNum(g('in_g')) || 0, d: parseNum(g('in_d')) || 0, dl: parseNum(g('in_dl')) || 0, l: parseNum(g('in_l')) || 0 } : null }; });
+    const old = P.modelSpec?.parts[i] || {}, PB = MD.partBoxes(P.modelSpec)[i] || { W: 1, D: 1 };
+    const balconies = $$("[data-bal]", el).map((r) => { const v = (k) => $(`[data-bf="${k}"]`, r).value, sd = v('side'), sp = (sd === 'gore' || sd === 'dolje' ? PB.W : PB.D) || 1; return { side: sd, x0: (parseNum(v('a')) || 0) / sp, x1: (parseNum(v('b')) || 0) / sp, d: parseNum(v('d')) || 1.5, rail: v('rail'), floors: v('fl').split(/[,; ]+/).map(Number).filter((n) => n > 0) }; });
+    return { ...(old.shape ? { shape: old.shape } : {}), name: g('name'), floors: parseNum(g('floors')) || hs.length || 1, heights: hs, inset: i ? { g: parseNum(g('in_g')) || 0, d: parseNum(g('in_d')) || 0, dl: parseNum(g('in_dl')) || 0, l: parseNum(g('in_l')) || 0 } : null, balconies }; });
   $$('[data-pf]', side).forEach((i) => i.onkeydown = (e) => { if (e.key === 'Enter') apply(); });
   const pa = $('#pAdd', side); if (pa) pa.onclick = () => { const ps = readParts(); ps.push({ name: 'Gornji dio', floors: 1, heights: [3], inset: { g: 2, d: 2, dl: 2, l: 2 } }); const n = setObjekt(null, { parts: ps }); after(n, 'Dodan je uvučeni gornji dio: upiši mu etaže i uvlake.'); };
+  $$('[data-bkadd]', side).forEach((b) => b.onclick = () => { const ps = readParts(); ps[+b.dataset.bkadd].balconies.push({ side: 'dolje', x0: 0.1, x1: 0.4, d: 1.5, rail: 'staklo', floors: [] }); const n = setObjekt(null, { parts: ps }); after(n, 'Dodan je balkon: upiši mu stranu, položaj i istak.'); });
+  $$('[data-bkdel]', side).forEach((b) => b.onclick = () => { const [pi, bi] = b.dataset.bkdel.split(':').map(Number), ps = readParts(); ps[pi].balconies.splice(bi, 1); const n = setObjekt(null, { parts: ps }); after(n, 'Balkon je uklonjen.'); });
+  $$('[data-bf]', side).forEach((x) => { if (x.tagName === 'SELECT') x.onchange = () => apply(); else x.onkeydown = (e) => { if (e.key === 'Enter') apply(); }; });
   $$('[data-pdel]', side).forEach((b) => b.onclick = () => { const ps = readParts(); ps.splice(+b.dataset.pdel, 1); const n = setObjekt(null, { parts: ps }); after(n, 'Dio zgrade je uklonjen.'); });
   const apply = () => { const d = {}; $$('[data-dm]', side).forEach((i) => { const v = parseNum(i.value); if (v != null) d[i.dataset.dm] = v; }); if (P.modelType === 'ai' && P.modelSpec) { d.parts = readParts(); d.sides = $$('[data-fs]', side).map((x) => x.value); } const n = setObjekt(null, d), c = curDims(); after(n, `Dimenzije: ${fq(c.W)} × ${fq(c.D)} m, ${MD.etaze(c.floors)}, etaža ${fq(c.storeyH)} m.`); };
   $('#dmApply', side).onclick = apply;
@@ -1189,22 +1198,24 @@ async function pageNums(pageNo, box) {
 const pageLevels = (n) => [...new Set((pageInfo[n].text.match(/[+\-±]\s?\d{1,2}[.,]\d{2}(?!\d)/g) || []).map((x) => x.replace(/\s/g, '')))].slice(0, 50).join(' ') || 'nema';
 let aiModelBusy = false;
 const aiMemo = {};
+// kratki dnevnik zadnjeg AI čitanja (što je pročitano i gdje je stalo), odvojen od projekta: služi za provjeru i podršku
+async function aiReadLog(o) { try { if (cap.db && cap.uid) await cap.db.collection('data/users/' + cap.uid).doc('ailog_' + P.id).set({ t: Date.now(), name: P.name, ...o }); } catch (e) { console.warn(e); } }
 async function aiBuildModel() {
   if (aiModelBusy) return toast('AI već slaže model, pričekaj.');
   if (!pdfDoc) return toast('Prvo učitaj nacrte (PDF) u kartici Nacrt.');
   openChat();
   if (!cap.sample || !cap.imagesOk) return addMsg('sys', 'AI čitanje nacrta ovdje nije dostupno (otvori program na claude.ai i dopusti mu korištenje Claudea). 3D model možeš zadati vrstom objekta i dimenzijama.');
-  aiModelBusy = true; const say = (t) => addMsg('sys', t), num = (v) => (isFinite(+v) ? +v : null);
+  aiModelBusy = true; const say = (t) => { addMsg("sys", t); aiReadLog({ ok: null, step: t }); }, num = (v) => (isFinite(+v) ? +v : null);
   try {
     const memo = (aiMemo[P.docId] ||= {}), MAXI = cap.maxImages || 4;
-    say(`Slažem 3D model iz dokumenta „${P.pdf.name}”. 1/5: biram stranice (tlocrt, presjek, pročelja)…`);
+    say(`Slažem 3D model iz dokumenta „${P.pdf.name}”. 1/6: biram stranice (tlocrt, presjek, pročelja)…`);
     if (!memo.pick) {
       const list = Object.entries(pageInfo).map(([n, i]) => `${n}. „${i.title}” ${i.ratio ? '1:' + i.ratio : ''} | ${i.text.slice(0, 170)}`).join('\n').slice(0, 14000);
       memo.pick = await askJson(`Ovo je popis stranica PDF-a iz projekta zgrade (broj, naslov, mjerilo, početak teksta sa stranice):\n${list}\n\nOdaberi stranice potrebne za 3D model vanjskog oblika zgrade. Vrati {"tlocrt": broj stranice tlocrta prizemlja (ili karakteristične etaže ako prizemlja nema), "tlocrtKata": broj stranice tlocrta karakterističnog kata iznad prizemlja ili null, "presjek": broj stranice presjeka ili null, "procelja": [brojevi stranica pročelja / fasada / pogleda cijele zgrade, najviše 4, bez detalja], "napomena": "kratko"}. Ako dokument ne sadrži tlocrt zgrade, vrati {"tlocrt": null, "napomena": "što dokument sadrži"}.`);
     }
     const pick = memo.pick, tp = +pick.tlocrt;
     if (!tp || !pageInfo[tp]) { delete aiMemo[P.docId]; return say(`U ovom dokumentu nisam našao tlocrt zgrade${pick.napomena ? ' (' + pick.napomena + ')' : ''}. Otvori dokument s tlocrtom, presjekom i pročeljima (popis dokumenata je u kartici Nacrt) ili zadaj dimenzije ručno.`); }
-    say(`2/5: tražim obris zgrade na tlocrtu (str. ${tp}, „${pageInfo[tp].title}”)…`);
+    say(`2/6: tražim obris zgrade na tlocrtu (str. ${tp}, „${pageInfo[tp].title}”)…`);
     const pi = pageInfo[tp], mpp = scaleOf(tp);
     if (!memo.ob) {
       const fr = await askJson('Priložena je stranica arhitektonskog nacrta. Nađi crtež tlocrta zgrade (bez zaglavlja, legende, tablica). Vrati {"okvir":[x0,y0,x1,y1]} u udjelima širine i visine slike (0–1, ishodište gore lijevo) tako da okvir obuhvati cijeli tlocrt zgrade zajedno s vanjskim kotama. Ako je na stranici više tlocrta, uzmi najveći.', [await pageCropBlob(tp)]);
@@ -1235,7 +1246,7 @@ async function aiBuildModel() {
     if (!memo.hv) {
       const kat = +pick.tlocrtKata && pageInfo[+pick.tlocrtKata] && +pick.tlocrtKata !== tp ? +pick.tlocrtKata : null;
       const hp = [...new Set([sect, kat, ...elev].filter(Boolean))].slice(0, MAXI - 1);
-      say(`3/5: čitam dijelove zgrade, etaže, visine i krov${hp.length ? ' (str. ' + hp.join(', ') + ')' : ' (nema presjeka ni pročelja, samo tlocrt)'}…`);
+      say(`3/6: čitam dijelove zgrade, etaže, visine i krov${hp.length ? ' (str. ' + hp.join(', ') + ')' : ' (nema presjeka ni pročelja, samo tlocrt)'}…`);
       const imgs = [crop], desc = [`Slika 1: izrez tlocrta prizemlja (str. ${tp}).`];
       for (const n of hp) { imgs.push(await pageImg(n)); desc.push(pdesc(n, imgs.length, n === sect ? 'presjek' : n === kat ? 'tlocrt kata' : 'pročelje')); }
       memo.hv = await askJson(`Slažem 3D model vanjskog oblika zgrade. Obris prizemlja (podnožja) je već određen: širina ${fq(W)} m (vodoravno na tlocrtu) × dubina ${fq(D)} m.\n${desc.join('\n')}\n\nZgrada se opisuje DIJELOVIMA odozdo prema gore. Ako je tlocrt jednak po cijeloj visini, postoji jedan dio. Ako su gornje etaže uvučene ili imaju manji tlocrt (npr. poslovno podnožje i uži stambeni dio iznad), svaki takav volumen je zaseban dio.\nVrati JSON: {"dijelovi": [{"naziv": npr. "poslovno podnožje" ili "stambeni dio", "etaze": broj nadzemnih etaža tog dijela (podrum i suteren se ne broje), "visineEtaza": [visina svake etaže od poda do poda u m, odozdo prema gore; koristi visinske kote], "uvlaka": null za najdonji dio, a za gornje dijelove {"gore": m, "desno": m, "dolje": m, "lijevo": m} = koliko je rub tog dijela uvučen od ruba dijela ispod, na svakoj strani slike tlocrta (0 ako je u istoj ravnini). Na kojoj strani podnožja gornji dio stoji provjeri i na presjeku i pročeljima, ne samo na tlocrtu kata}], "krov": oblik krova najgornjeg dijela: "ravni" | "dvostresni" | "cetverostresni" | "jednostresni", "smjerSljemena": "lijevo-desno" ili "gore-dolje" kako sljeme ide na slici tlocrta (null za ravni krov), "visinaSljemena": od ±0,00 u m ili null, "prepust": prepust krova u m, "pouzdanost": 0–1, "napomene": ["što nisi mogao pročitati ili što je pojednostavljeno"]}.`, imgs, 'complex');
@@ -1243,12 +1254,44 @@ async function aiBuildModel() {
     const hv = memo.hv;
     const partsAi = (Array.isArray(hv.dijelovi) && hv.dijelovi.length ? hv.dijelovi : [{ naziv: 'Zgrada', etaze: hv.etaze, visineEtaza: num(hv.visinaEtaze) ? [num(hv.visinaEtaze)] : [], vrh: hv.visinaVrhaZida }]).slice(0, 4);
     const partsTxt = partsAi.map((p, i) => `${i + 1}. ${p.naziv || 'dio'}: ${num(p.etaze) || '?'} etaža, visine ${(Array.isArray(p.visineEtaza) ? p.visineEtaza : []).join(' / ') || '?'} m`).join('; ');
-    // 4/5 otvori: po dva pročelja u upitu; ako jedan upit ne uspije, model se ipak složi bez tih otvora
+    // 4/6 tlocrt kata: točan oblik te etaže (krila, uvučena stubišta) i balkoni s ogradama
+    const katP = +pick.tlocrtKata && pageInfo[+pick.tlocrtKata] && +pick.tlocrtKata !== tp ? +pick.tlocrtKata : null, katI = partsAi.length > 1 ? 1 : 0;
+    if (katP && memo.kat === undefined) {
+      say(`4/6: čitam oblik kata i balkone (str. ${katP}, „${pageInfo[katP].title}”)…`);
+      try {
+        const fr = await askJson('Priložena je stranica arhitektonskog nacrta. Nađi crtež tlocrta zgrade (bez zaglavlja, legende, tablica). Vrati {"okvir":[x0,y0,x1,y1]} u udjelima širine i visine slike (0–1, ishodište gore lijevo) tako da okvir obuhvati cijeli tlocrt te etaže s balkonima i vanjskim kotama, ali bez praznog dijela lista.', [await pageImg(katP)]);
+        let kb = (Array.isArray(fr.okvir) ? fr.okvir : [0, 0, 1, 1]).map(Number);
+        if (kb.length !== 4 || kb.some((v) => !isFinite(v)) || kb[2] - kb[0] < 0.08 || kb[3] - kb[1] < 0.08) kb = [0, 0, 1, 1];
+        kb = [Math.max(0, kb[0] - 0.02), Math.max(0, kb[1] - 0.02), Math.min(1, kb[2] + 0.02), Math.min(1, kb[3] + 0.02)];
+        const imgs = [await pageCropBlob(katP, kb)], desc = [`Slika 1: izrez tlocrta kata (str. ${katP})${pageInfo[katP].ratio ? ', mjerilo 1:' + pageInfo[katP].ratio : ''}.`];
+        for (const n of elev.slice(0, 2)) { imgs.push(await pageImg(n)); desc.push(pdesc(n, imgs.length, 'pročelje')); }
+        const kr = await askJson(`Slažem 3D model zgrade. Dijelovi odozdo prema gore: ${partsTxt}. Tlocrt na slici 1 prikazuje dio „${partsAi[katI].naziv || 'zgrada'}”.\n${desc.join('\n')}\n\nVrati JSON: {"obris": [[x,y],...] vanjski rub vanjskih zidova te etaže, redom po obodu, u udjelima širine i visine slike 1 (0–1, ishodište gore lijevo), SA SVIM lomovima većim od 1 m (krila zgrade, istaci, uvučena stubišta), ali BEZ balkona, lođa i terasa; "sirina_m" i "dubina_m": ukupna širina (vodoravno) i dubina (okomito) tog obrisa u metrima iz kota, inače null; "donjiDio": ako je na tom tlocrtu tankom linijom ucrtan i obris nižeg, šireg dijela zgrade (podnožja), njegov okvir [x0,y0,x1,y1] u udjelima slike 1, inače null; "balkoni": [{"naziv": oznaka s nacrta, "okvir": [x0,y0,x1,y1] okvir tog balkona ili lođe u udjelima slike 1, "ograda": "staklo" | "metal" | "zid" (vidi pročelja: staklena ograda je plava ili prozirna ploha ispred etaže), "etaze": [redni brojevi etaža tog dijela zgrade na kojima balkon postoji, 1 = najdonja; vidi pročelja]}], "napomena": "kratko"}.\nNavedi svaki balkon s tlocrta zasebno. Brojevi s nacrta (kote, najčešće u cm) s položajem na slici 1 u obliku vrijednost@x,y: ${await pageNums(katP, kb) || 'nema'}`, imgs, 'complex');
+        memo.kat = { box: kb, r: kr };
+      } catch (e) { if (e?.code === 'not_granted') throw e; console.warn(e); memo.kat = null; }
+    }
+    let katPart = null; const katNote = [];
+    if (katP && memo.kat?.r && Array.isArray(memo.kat.r.obris) && memo.kat.r.obris.length >= 3) {
+      const { box: kb, r: kr } = memo.kat, ki = pageInfo[katP], km = scaleOf(katP), toPt = ([fx, fy]) => [(kb[0] + fx * (kb[2] - kb[0])) * ki.w, (kb[1] + fy * (kb[3] - kb[1])) * ki.h];
+      const op = kr.obris.map((q) => toPt(q.map(Number))), ex = (k) => Math.max(...op.map((q) => q[k])) - Math.min(...op.map((q) => q[k])), ksw = num(kr.sirina_m), ksd = num(kr.dubina_m);
+      let kx = km, kz = km;
+      if (!km) kx = kz = ksw > 2 ? ksw / ex(0) : 0; else { if (ksw > 2 && Math.abs(ksw / (ex(0) * km) - 1) < 0.3) kx = ksw / ex(0); if (ksd > 2 && Math.abs(ksd / (ex(1) * km) - 1) < 0.3) kz = ksd / ex(1); }
+      if (kx > 0) {
+        const M2 = ([x, z]) => [x * kx, z * kz], om = op.map(M2), rect = (o) => { const q = (Array.isArray(o) ? o : []).map(Number); return q.length === 4 && q.every(isFinite) ? [...M2(toPt([q[0], q[1]])), ...M2(toPt([q[2], q[3]]))] : null; };
+        katPart = MD.katToPart(om, (Array.isArray(kr.balkoni) ? kr.balkoni : []).map((b) => ({ box: rect(b.okvir), rail: b.ograda, floors: b.etaze })).filter((b) => b.box));
+        const dd = rect(kr.donjiDio);
+        if (katPart && dd && Math.abs((dd[2] - dd[0]) / W - 1) < 0.12 && Math.abs((dd[3] - dd[1]) / D - 1) < 0.12) { // obris podnožja ucrtan na istom tlocrtu: uvlaka je izravno izmjerena
+          const mn = (k) => Math.min(...om.map((q) => q[k])), mx = (k) => Math.max(...om.map((q) => q[k])), p0 = (v) => r2(Math.max(0, v));
+          katPart.inset = { l: p0(mn(0) - dd[0]), g: p0(mn(1) - dd[1]), d: p0(dd[2] - mx(0)), dl: p0(dd[3] - mx(1)) };
+        }
+        if (kr.napomena) katNote.push(String(kr.napomena));
+      }
+    }
+    // 5/6 otvori: po dva pročelja u upitu; ako jedan upit ne uspije, model se ipak složi bez tih otvora
     memo.facs ||= {}; const failed = [], per = Math.max(1, Math.min(2, MAXI - 1));
     for (let i = 0; i < elev.length; i += per) {
       const g = elev.slice(i, i + per), key = g.join('-');
       if (memo.facs[key]) continue;
-      say(`4/5: čitam prozore i vrata s pročelja (str. ${g.join(', ')})…`);
+      say(`5/6: čitam prozore i vrata s pročelja (str. ${g.join(', ')})…`);
       try {
         const imgs = [crop], desc = [`Slika 1: izrez tlocrta (str. ${tp}).`];
         for (const n of g) { imgs.push(await pageImg(n)); desc.push(pdesc(n, imgs.length, 'pročelje')); }
@@ -1260,11 +1303,18 @@ async function aiBuildModel() {
       } catch (e) { if (e?.code === 'not_granted') throw e; console.warn(e); failed.push(...g); }
     }
     hv.procelja = Object.values(memo.facs).flatMap((f) => f.list);
-    hv.napomene = [...(Array.isArray(hv.napomene) ? hv.napomene : []), ...Object.values(memo.facs).map((f) => f.note).filter(Boolean), ...(failed.length ? [`otvore sa str. ${failed.join(', ')} nisam uspio pročitati (pokreni ponovno za dopunu)`] : [])];
-    say('5/5: slažem model…');
+    hv.napomene = [...(Array.isArray(hv.napomene) ? hv.napomene : []), ...katNote, ...Object.values(memo.facs).map((f) => f.note).filter(Boolean), ...(failed.length ? [`otvore sa str. ${failed.join(', ')} nisam uspio pročitati (pokreni ponovno za dopunu)`] : [])];
+    say('6/6: slažem model…');
     const ROOF = { ravni: 'flat', dvostresni: 'gable', cetverostresni: 'hip', jednostresni: 'mono' };
     const res = MD.resolveSpec(MD.normSpec({ fp: pts, roof: ROOF[hv.krov] || 'flat', ridgeDir: hv.smjerSljemena === 'lijevo-desno' ? 'x' : 'z', ridgeH: num(hv.visinaSljemena), ov: num(hv.prepust),
-      parts: partsAi.map((p, i) => ({ name: p.naziv, floors: num(p.etaze), heights: (Array.isArray(p.visineEtaza) ? p.visineEtaza : []).map(num).filter((v) => v > 0), wallTop: num(p.vrh), inset: i && p.uvlaka ? { g: num(p.uvlaka.gore), d: num(p.uvlaka.desno), dl: num(p.uvlaka.dolje), l: num(p.uvlaka.lijevo) } : null })),
+      parts: partsAi.map((p, i) => ({ name: p.naziv, floors: num(p.etaze), heights: (Array.isArray(p.visineEtaza) ? p.visineEtaza : []).map(num).filter((v) => v > 0), wallTop: num(p.vrh), inset: i && p.uvlaka ? { g: num(p.uvlaka.gore), d: num(p.uvlaka.desno), dl: num(p.uvlaka.dolje), l: num(p.uvlaka.lijevo) } : null })).map((p, i) => {
+        if (!katPart || i !== katI) return p;
+        const q = { ...p, balconies: katPart.balconies }; if (!i) return q;
+        // veličina i oblik s tlocrta kata; položaj iz ucrtanog podnožja ili s one strane na kojoj je AI vidio manju uvlaku
+        const n = p.inset || { g: 0, d: 0, dl: 0, l: 0 }, lf = (n.l || 0) <= (n.d || 0), tp2 = (n.g || 0) <= (n.dl || 0), rw = Math.max(0, W - katPart.W), rdp = Math.max(0, D - katPart.D), al = Math.min(rw, lf ? n.l || 0 : rw - (n.d || 0)), ag = Math.min(rdp, tp2 ? n.g || 0 : rdp - (n.dl || 0));
+        q.inset = katPart.inset || { l: r2(Math.max(0, al)), d: r2(rw - Math.max(0, al)), g: r2(Math.max(0, ag)), dl: r2(rdp - Math.max(0, ag)) };
+        if (katPart.shape) q.shape = katPart.shape; return q;
+      }),
       facades: (Array.isArray(hv.procelja) ? hv.procelja : []).map((f) => ({ side: f.strana, name: f.naziv, width: num(f.sirina_m), upper: (Array.isArray(f.gornji) ? f.gornji : []).map((u) => ({ part: num(u.dio), x0: num(u.x0), x1: num(u.x1) })).filter((u) => u.part >= 2 && u.x1 > u.x0),
         openings: (Array.isArray(f.otvori) ? f.otvori : []).map((o) => ({ x: num(o.x), s: num(o.parapet), w: num(o.sirina), h: num(o.visina), t: o.vrsta })) })) }));
     const spec = res.spec, base = MD.modelFromAi(spec);
@@ -1277,13 +1327,14 @@ async function aiBuildModel() {
     if (P.buildLinked) applySlots(MD.ALL_SLOTS);
     touch();
     const d = MD.modelDims(base), allV = MD.volsOf(base), nOps = allV.reduce((s0, v) => s0 + v.openings.length, 0), conf = Math.round(100 * Math.min(num(ob.pouzdanost) ?? 0.5, num(hv.pouzdanost) ?? 0.5)), notes = [ob.napomena, ...(Array.isArray(hv.napomene) ? hv.napomene : [])].filter(Boolean).map(String);
-    const partLines = spec.parts.map((p, i) => `  ${i + 1}. ${p.name}: ${p.floors} ${p.floors === 1 ? 'etaža' : p.floors < 5 ? 'etaže' : 'etaža'}, visine ${p.heights.map((h) => fq(h)).join(' / ')} m${p.inset ? `, uvučeno gore ${fq(p.inset.g)} · desno ${fq(p.inset.d)} · dolje ${fq(p.inset.dl)} · lijevo ${fq(p.inset.l)} m` : ''}`).join('\n');
-    addMsg('assistant', `3D model je složen iz nacrta (AI prijedlog, provjeri ga):\n• tlocrt podnožja ${fq(d.W)} × ${fq(d.D)} m, ${base.fp.length} uglova (str. ${tp})\n• ${spec.parts.length > 1 ? 'dijelovi zgrade' : 'zgrada'} (ukupno ${MD.etaze(d.floors)}, visina ${fq(r2(MD.topOf(P.model)))} m):\n${partLines}\n• krov: ${MD.optOf('krovOblik', spec.roof).n.toLowerCase()}; ${nOps} otvora s pročelja (${spec.facades.map((f) => `${String(f.name || 'pročelje').replace(/\s*PROČELJE\s*/i, '').toLowerCase() || 'pročelje'} = ${f.side}`).join(', ')})\n${res.notes.length ? '• usklađivanje nacrta: ' + res.notes.join('; ') + '\n' : ''}• pouzdanost oko ${conf} %${tall ? '\n• izvedbu sam postavio na armirani beton i temeljnu ploču (zidana ne prolazi osnovna pravila za ovu visinu); promijeni ako projekt kaže drukčije' : ''}${notes.length ? '\nNapomene: ' + notes.slice(0, 5).join(' · ') : ''}\n\nSvaki dio (etaže, visine, uvlake), strane pročelja i ukupne mjere ispravi u 3D prikaz → Izvedba i cijene → Objekt i dimenzije.`);
+    const partLines = spec.parts.map((p, i) => `  ${i + 1}. ${p.name}: ${p.floors} ${p.floors === 1 ? 'etaža' : p.floors < 5 ? 'etaže' : 'etaža'}, visine ${p.heights.map((h) => fq(h)).join(' / ')} m${p.shape ? `, tlocrt s ${p.shape.length} uglova` : ''}${p.balconies?.length ? `, balkona na etaži: ${p.balconies.length} (${[...new Set(p.balconies.map((b) => b.rail === 'staklo' ? 'staklena ograda' : b.rail === 'metal' ? 'metalna ograda' : 'zidana ograda'))].join(', ')})` : ''}${p.inset ? `, uvučeno gore ${fq(p.inset.g)} · desno ${fq(p.inset.d)} · dolje ${fq(p.inset.dl)} · lijevo ${fq(p.inset.l)} m` : ''}`).join('\n');
+    addMsg('assistant', `3D model je složen iz nacrta (AI prijedlog, provjeri ga):\n• tlocrt podnožja ${fq(d.W)} × ${fq(d.D)} m, ${base.fp.length} uglova (str. ${tp})\n• ${spec.parts.length > 1 ? 'dijelovi zgrade' : 'zgrada'} (ukupno ${MD.etaze(d.floors)}, visina ${fq(r2(MD.topOf(P.model)))} m):\n${partLines}\n• krov: ${MD.optOf('krovOblik', spec.roof).n.toLowerCase()}; ${nOps} otvora s pročelja (${spec.facades.map((f) => `${String(f.name || 'pročelje').replace(/\s*PROČELJE\s*/i, '').toLowerCase() || 'pročelje'} = ${f.side}`).join(', ')})\n${res.notes.length ? '• usklađivanje nacrta: ' + res.notes.join('; ') + '\n' : ''}• pouzdanost oko ${conf} %${tall ? '\n• izvedbu sam postavio na armirani beton i temeljnu ploču (zidana ne prolazi osnovna pravila za ovu visinu); promijeni ako projekt kaže drukčije' : ''}${notes.length ? '\nNapomene: ' + notes.slice(0, 5).join(' · ') : ''}\n\nSvaki dio (etaže, visine, uvlake, balkone), strane pročelja i ukupne mjere ispravi u 3D prikaz → Izvedba i cijene → Objekt i dimenzije.`);
+    aiReadLog({ ok: true, msg: P.chat[P.chat.length - 1]?.content || '', parts: spec.parts, sides: spec.facades.map((f) => ({ n: f.name, side: f.side, ai: f.sideAi, w: f.width, up: f.upper, ops: f.openings.length })), kat: memo.kat?.r || null, katBox: memo.kat?.box || null, fp: spec.fp, vols: MD.volsOf(P.model).map((v) => ({ fp: v.fp, ops: v.openings.length, bk: (v.balconies || []).length })) });
     if (!failed.length) delete aiMemo[P.docId];
     showView('3d');
   } catch (e) {
-    console.warn(e);
-    say(e?.code === 'not_granted' ? 'AI nije dopušten u ovom prikazu. 3D model zadaj vrstom objekta i dimenzijama.' : e?.code === 'rate_limited' ? 'AI je trenutno zauzet (ograničenje broja upita). Pokušaj ponovno za minutu.' : `Nisam uspio složiti model (${e?.message || e}). Pokreni ponovno: koraci koji su uspjeli neće se ponavljati. Dimenzije možeš zadati i ručno.`);
+    console.warn(e); aiReadLog({ ok: false, err: String(e?.message || e), code: e?.code || null });
+    addMsg('sys', e?.code === 'not_granted' ? 'AI nije dopušten u ovom prikazu. 3D model zadaj vrstom objekta i dimenzijama.' : e?.code === 'rate_limited' ? 'AI je trenutno zauzet (ograničenje broja upita). Pokušaj ponovno za minutu.' : `Nisam uspio složiti model (${e?.message || e}). Pokreni ponovno: koraci koji su uspjeli neće se ponavljati. Dimenzije možeš zadati i ručno.`);
   } finally { aiModelBusy = false; }
 }
 function renderStages3d() {

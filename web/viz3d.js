@@ -386,7 +386,7 @@ export class Viz3D {
       grass: P(T.grass, 0.4, { color: C.teren || DEFAULT_COLORS.teren, rough: 1, ns: 0.8 }),
       paving: P(T.paving, 0.5, { rough: 0.88, ns: 0.9 }),
       gravel: P(T.concrete, 1.6, { color: '#cfc9be', rough: 1, ns: 1.4 }),
-      railGlass: new THREE.MeshPhysicalMaterial({ color: '#cfe4e6', transparent: true, opacity: 0.16, roughness: 0.02, envMapIntensity: 1.2, side: THREE.DoubleSide }),
+      railGlass: new THREE.MeshPhysicalMaterial({ color: '#a9d3e6', transparent: true, opacity: 0.34, roughness: 0.02, envMapIntensity: 1.2, side: THREE.DoubleSide }),
       bark: P(T.bark, 1, { rough: 0.95, ns: 1.2 }),
       lamp: new THREE.MeshStandardMaterial({ color: '#fff7e0', emissive: '#ffe9b0', emissiveIntensity: 0.6 }),
     };
@@ -403,6 +403,26 @@ export class Viz3D {
   }
   add(mesh, part, minStage = 0, maxStage = 9) { mesh.traverse((o) => { o.castShadow = !o.userData.noShadow; o.receiveShadow = true; }); mesh.userData = { part, minStage, maxStage }; (this.cur || this.root).add(mesh); this.parts.push(mesh); return mesh; }
   box(w, h, d, mat, x, y, z, part, s0, s1) { const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); g.position.set(x, y, z); return this.add(g, part, s0, s1); }
+  // balkon iz nacrta: konzolna ploča na rubu dijela zgrade, na svakoj zadanoj razini, s ogradom na tri slobodne strane
+  balconyAt(v, bk) {
+    const M = this.M, e = edges(v)[bk.e]; if (!e) return;
+    const [nx, nz] = outward(v, e), ang = -Math.atan2(e.dz, e.dx), P = (u, o) => [e.p[0] + e.dx * u + nx * o, e.p[1] + e.dz * u + nz * o];
+    (bk.ys || []).forEach((y) => {
+      const [cx, cz] = P(bk.u, bk.d / 2);
+      const mk = (w, h, d, mat, yy, s0) => { const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); g.position.set(cx, yy, cz); g.rotation.y = ang; this.add(g, 'balkon', s0, 9); };
+      mk(bk.w, 0.2, bk.d, M.render, y - 0.1, 2); mk(bk.w + 0.02, 0.03, bk.d + 0.02, M.metal, y - 0.205, 4); mk(bk.w - 0.04, 0.04, bk.d - 0.04, M.paving, y + 0.02, 4);
+      const c = [P(bk.u - bk.w / 2, 0.02), P(bk.u - bk.w / 2, bk.d - 0.03), P(bk.u + bk.w / 2, bk.d - 0.03), P(bk.u + bk.w / 2, 0.02)];
+      for (let i = 0; i < 3; i++) {
+        const [ax, az] = c[i], [bx, bz] = c[i + 1], L = Math.hypot(bx - ax, bz - az), ra = -Math.atan2(bz - az, bx - ax);
+        if (bk.rail === 'zid') { const g = new THREE.Mesh(new THREE.BoxGeometry(L + 0.12, 1.05, 0.12), M.render); g.position.set((ax + bx) / 2, y + 0.52, (az + bz) / 2); g.rotation.y = ra; this.add(g, 'balkon', 4, 9); continue; }
+        if (bk.rail === 'metal') { for (let k = 1; k * 0.12 < L; k++) this.box(0.015, 0.92, 0.015, M.steel, ax + (bx - ax) * k * 0.12 / L, y + 0.53, az + (bz - az) * k * 0.12 / L, 'balkon', 4, 9); }
+        else { const gl = new THREE.Mesh(new THREE.BoxGeometry(L - 0.04, 0.95, 0.014), M.railGlass); gl.position.set((ax + bx) / 2, y + 0.54, (az + bz) / 2); gl.rotation.y = ra; gl.userData.noShadow = true; this.add(gl, 'balkon', 4, 9); }
+        this.beam(new THREE.Vector3(ax, y + 1.03, az), new THREE.Vector3(bx, y + 1.03, bz), 0.05, 0.04, M.steel, 'balkon', 4, 9);
+        this.beam(new THREE.Vector3(ax, y + 0.06, az), new THREE.Vector3(bx, y + 0.06, bz), 0.04, 0.04, M.steel, 'balkon', 4, 9);
+        this.box(0.04, 0.98, 0.04, M.steel, bx, y + 0.53, bz, 'balkon', 4, 9);
+      }
+    });
+  }
   // greda između dviju točaka (letve, rubni crijep, ograde)
   beam(a, b, w, h, mat, part, s0, s1) { const d = new THREE.Vector3().subVectors(b, a), L = d.length(); const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, L), mat); g.position.copy(a).addScaledVector(d, 0.5); g.lookAt(b); return this.add(g, part, s0, s1); }
 
@@ -463,8 +483,10 @@ export class Viz3D {
       EV.forEach((e) => this.wall(v, e, pv.filter((p) => p.e === e)));
       if (this.struct.children.length) this.add(mergeMeshes(this.struct), 'konstrukcija', 2, 3);
       this.roof(v, flatPoly);
+      (v.balconies || []).forEach((bk) => this.balconyAt(v, bk));
     });
     this.cur = null; this.G = G; this.ops = openingsIn(m, G);
+    (m.balconies || []).forEach((bk) => this.balconyAt(m, bk));
     (m.chimneys || []).forEach((c) => {
       const base = G.H(c.x, c.z) - 0.3, top = Math.max(c.top, base + 1.3);
       this.box(c.s, top - base, c.s, M.render, c.x, (top + base) / 2, c.z, 'krov', 3, 9);

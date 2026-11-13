@@ -133,9 +133,25 @@ export function normSpec(a) {
     if (!h && !hs.length && +p.wallTop > 0) h = Math.min(9, Math.max(2.4, (+p.wallTop - (roof === 'flat' ? 0.6 : 0.2)) / floors));
     const heights = Array.from({ length: floors }, (_, f) => rd(hs[f] ?? hs[hs.length - 1] ?? h ?? 2.9) || 2.9);
     const ins = i > 0 ? p.inset || {} : null, n0 = (v) => (isFinite(+v) && +v > 0 ? rd(Math.min(40, +v)) : 0);
-    return { name: String(p.name || (i ? 'Gornji dio ' + i : 'Podnožje')).slice(0, 40), floors, heights, inset: ins ? { g: n0(ins.g), d: n0(ins.d), dl: n0(ins.dl), l: n0(ins.l) } : null, ...(i > 0 && p.insetAi ? { insetAi: p.insetAi } : {}) };
+    return { name: String(p.name || (i ? 'Gornji dio ' + i : 'Podnožje')).slice(0, 40), floors, heights, inset: ins ? { g: n0(ins.g), d: n0(ins.d), dl: n0(ins.dl), l: n0(ins.l) } : null, ...(i > 0 && p.insetAi ? { insetAi: p.insetAi } : {}), ...(i > 0 && normShape(p.shape) ? { shape: normShape(p.shape) } : {}), ...(normBalc(p.balconies).length ? { balconies: normBalc(p.balconies) } : {}) };
   });
   return { fp: cleanPoly(a.fp), roof, ridgeDir: a.ridgeDir === 'x' ? 'x' : 'z', ridgeH: isFinite(+a.ridgeH) ? +a.ridgeH : null, ov: isFinite(+a.ov) && a.ov != null ? Math.min(1.5, Math.max(0, +a.ov)) : 0.5, parts, facades: Array.isArray(a.facades) ? a.facades : [], ...(a.res ? { res: a.res } : {}) };
+}
+// oblik gornjeg dijela: poligon u udjelima (0–1) njegova pravokutnika, rastegnut tako da dodiruje sve četiri strane
+function normShape(sh) {
+  if (!Array.isArray(sh) || sh.length < 4) return null;
+  const P = sh.map((q) => [+q[0], +q[1]]).filter((q) => isFinite(q[0]) && isFinite(q[1])); if (P.length < 4) return null;
+  const x0 = Math.min(...P.map((q) => q[0])), x1 = Math.max(...P.map((q) => q[0])), z0 = Math.min(...P.map((q) => q[1])), z1 = Math.max(...P.map((q) => q[1]));
+  if (x1 - x0 < 1e-6 || z1 - z0 < 1e-6) return null;
+  const R = (v) => Math.round(v * 1000) / 1000, out = [];
+  P.forEach((q) => { const c = [R((q[0] - x0) / (x1 - x0)), R((q[1] - z0) / (z1 - z0))], l = out[out.length - 1]; if (!l || Math.hypot(l[0] - c[0], l[1] - c[1]) > 0.01) out.push(c); });
+  if (out.length > 3 && Math.hypot(out[0][0] - out[out.length - 1][0], out[0][1] - out[out.length - 1][1]) < 0.01) out.pop();
+  return out.length >= 4 && Math.abs(polyArea(out)) > 0.15 && Math.abs(polyArea(out)) < 0.98 ? out : null; // pravokutnik ne treba oblik
+}
+const RAILS = ['staklo', 'metal', 'zid'];
+function normBalc(bs) {
+  return (Array.isArray(bs) ? bs : []).map((b) => ({ side: b.side, x0: Math.min(1, Math.max(0, +b.x0)), x1: Math.min(1, Math.max(0, +b.x1)), d: isFinite(+b.d) && +b.d > 0 ? Math.min(5, Math.max(0.6, +b.d)) : 1.5, floors: (Array.isArray(b.floors) ? b.floors : []).map((f) => Math.round(+f)).filter((f) => f >= 1 && f <= 12), rail: RAILS.includes(b.rail) ? b.rail : 'staklo' }))
+    .filter((b) => ['gore', 'desno', 'dolje', 'lijevo'].includes(b.side) && b.x1 - b.x0 > 0.01).slice(0, 40);
 }
 // promjena mjera na specifikaciji (širina/dubina rastežu obris; dijelovi se zamjenjuju ako su zadani)
 export function specWithDims(spec, d = {}) {
@@ -151,17 +167,47 @@ export function specWithDims(spec, d = {}) {
   return normSpecKeep(sp);
 }
 const normSpecKeep = (sp) => ({ ...normSpec(sp), pitch: sp.pitch });
+// obrisi dijelova u koordinatama tlocrta (prije moguće rotacije): gornji dio = pravokutnik ili zadani oblik, uvučen od dijela ispod
+function specFps(a) {
+  const fps = [a.fp];
+  for (let i = 1; i < a.parts.length; i++) {
+    const b = bbox({ fp: fps[i - 1] }), n = a.parts[i].inset, w = b.x1 - b.x0, dd = b.z1 - b.z0;
+    const l = Math.min(n.l, w - 3), r = Math.min(n.d, Math.max(0, w - 3 - l)), g = Math.min(n.g, dd - 3), dl = Math.min(n.dl, Math.max(0, dd - 3 - g));
+    const X0 = b.x0 + l, X1 = b.x1 - r, Z0 = b.z0 + g, Z1 = b.z1 - dl, sh = a.parts[i].shape;
+    fps.push(sh ? sh.map(([fx, fz]) => [rd(X0 + fx * (X1 - X0)), rd(Z0 + fz * (Z1 - Z0))]) : l + r + g + dl < 0.05 ? fps[i - 1].map((p) => p.slice()) : [[rd(X0), rd(Z0)], [rd(X1), rd(Z0)], [rd(X1), rd(Z1)], [rd(X0), rd(Z1)]]);
+  }
+  return fps;
+}
+// širina i dubina pravokutnika svakog dijela (za uređivanje balkona u metrima)
+export function partBoxes(spec) { return specFps(normSpecKeep(spec)).map((fp) => { const b = bbox({ fp }); return { W: rd(b.x1 - b.x0), D: rd(b.z1 - b.z0) }; }); }
+// Tlocrt kata pročitan s nacrta (obris i okviri balkona u metrima, x desno, z dolje) → oblik dijela i balkoni po stranama.
+// Strana balkona određuje se prema rubu obrisa uz koji balkon leži.
+export function katToPart(obris, balkoni) {
+  const fp = cleanPoly(obris); if (fp.length < 3) return null;
+  const ox = Math.min(...obris.map((q) => +q[0])), oz = Math.min(...obris.map((q) => +q[1])); // cleanPoly pomiče obris u ishodište
+  const pv = { fp }, bb = bbox(pv), W = bb.x1 - bb.x0, D = bb.z1 - bb.z0, E = edges(pv), out = [];
+  for (const k of Array.isArray(balkoni) ? balkoni : []) {
+    const q = (Array.isArray(k.box) ? k.box : []).map((v, j) => +v - (j % 2 ? oz : ox)); if (q.length !== 4 || q.some((v) => !isFinite(v))) continue;
+    const x0 = Math.min(q[0], q[2]), x1 = Math.max(q[0], q[2]), z0 = Math.min(q[1], q[3]), z1 = Math.max(q[1], q[3]), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    let best = null;
+    for (const e of E) {
+      const n = outward(pv, e), hz = Math.abs(n[1]) > 0.7, vt = Math.abs(n[0]) > 0.7; if (!hz && !vt) continue;
+      const a0 = hz ? Math.min(e.p[0], e.q[0]) : Math.min(e.p[1], e.q[1]), a1 = hz ? Math.max(e.p[0], e.q[0]) : Math.max(e.p[1], e.q[1]), b0 = hz ? x0 : z0, b1 = hz ? x1 : z1;
+      const ov = Math.min(a1, b1) - Math.max(a0, b0), line = hz ? e.p[1] : e.p[0], dist = ((hz ? cz : cx) - line) * (hz ? n[1] : n[0]);
+      if (ov < 0.4 * Math.min(b1 - b0, a1 - a0) || dist < -0.6 || dist > 6) continue;
+      if (!best || dist < best.dist) best = { dist, side: hz ? (n[1] > 0 ? 'dolje' : 'gore') : n[0] > 0 ? 'desno' : 'lijevo', hz, far: Math.abs((hz ? (n[1] > 0 ? z1 : z0) : n[0] > 0 ? x1 : x0) - line) };
+    }
+    if (!best) { const dd = [['gore', bb.z0 - cz], ['dolje', cz - bb.z1], ['lijevo', bb.x0 - cx], ['desno', cx - bb.x1]].sort((p, r) => r[1] - p[1])[0]; if (dd[1] < -0.5) continue; const hz = dd[0] === 'gore' || dd[0] === 'dolje'; best = { side: dd[0], hz, far: hz ? z1 - z0 : x1 - x0 }; }
+    const f0 = best.hz ? (x0 - bb.x0) / W : (z0 - bb.z0) / D, f1 = best.hz ? (x1 - bb.x0) / W : (z1 - bb.z0) / D;
+    out.push({ side: best.side, x0: Math.max(0, f0), x1: Math.min(1, f1), d: Math.min(5, Math.max(0.6, best.far)), floors: k.floors, rail: k.rail });
+  }
+  return { W: rd(W), D: rd(D), shape: normShape(fp.map(([x, z]) => [(x - bb.x0) / W, (z - bb.z0) / D])), balconies: normBalc(out) };
+}
 export const modelFromAi = (a0) => assembleAi(a0).m;
 function assembleAi(a0) {
   const a = normSpecKeep(a0), flatTop = a.roof === 'flat', nP = a.parts.length;
-  let fp0 = a.fp; if (fp0.length < 3) throw new Error('Obris zgrade nije prepoznat.');
-  // obrisi dijelova u koordinatama tlocrta (prije moguće rotacije): gornji dio = pravokutnik uvučen od dijela ispod
-  const fps = [fp0];
-  for (let i = 1; i < nP; i++) {
-    const b = bbox({ fp: fps[i - 1] }), n = a.parts[i].inset, w = b.x1 - b.x0, dd = b.z1 - b.z0;
-    const l = Math.min(n.l, w - 3), r = Math.min(n.d, Math.max(0, w - 3 - l)), g = Math.min(n.g, dd - 3), dl = Math.min(n.dl, Math.max(0, dd - 3 - g));
-    fps.push(l + r + g + dl < 0.05 ? fps[i - 1].map((p) => p.slice()) : [[b.x0 + l, b.z0 + g], [b.x1 - r, b.z0 + g], [b.x1 - r, b.z1 - dl], [b.x0 + l, b.z1 - dl]]);
-  }
+  if (a.fp.length < 3) throw new Error('Obris zgrade nije prepoznat.');
+  const fps = specFps(a);
   const rot = (a.roof === 'gable' || a.roof === 'mono') && a.ridgeDir === 'x'; // sljeme mora ići po osi z
   let F = fps;
   if (rot) { F = fps.map((f) => f.map(([x, z]) => [-z, x])); const x0 = Math.min(...F[0].map((p) => p[0])), z0 = Math.min(...F[0].map((p) => p[1])); F = F.map((f) => f.map(([x, z]) => [rd(x - x0), rd(z - z0)])); }
@@ -207,6 +253,17 @@ function assembleAi(a0) {
       }
     });
   });
+  const DIR0 = { gore: [0, -1], desno: [1, 0], dolje: [0, 1], lijevo: [-1, 0] };
+  a.parts.forEach((p, i) => (p.balconies || []).forEach((bk) => {
+    const pv = { fp: fps[i] }, bb = bbox(pv), d = DIR0[bk.side], horiz = d[0] === 0, lo = horiz ? bb.x0 : bb.z0, span = horiz ? bb.x1 - bb.x0 : bb.z1 - bb.z0, c0 = lo + bk.x0 * span, c1 = lo + bk.x1 * span;
+    if (c1 - c0 < 0.6) return;
+    const cs = edges(pv).filter((e) => { const n = outward(pv, e); return n[0] * d[0] + n[1] * d[1] > 0.7; }).map((e) => { const a0 = horiz ? e.p[0] : e.p[1], a1 = horiz ? e.q[0] : e.q[1]; return { e, a0, a1, ov: Math.min(c1, Math.max(a0, a1)) - Math.max(c0, Math.min(a0, a1)), out: horiz ? (e.p[1] + e.q[1]) / 2 * d[1] : (e.p[0] + e.q[0]) / 2 * d[0] }; })
+      .filter((q) => q.ov > 0.5 * Math.min(c1 - c0, q.e.L)).sort((x, y) => y.ov - x.ov || y.out - x.out);
+    if (!cs.length) return;
+    const q = cs[0], s0 = Math.max(c0, Math.min(q.a0, q.a1)), s1 = Math.min(c1, Math.max(q.a0, q.a1)), v = vols[i], fl = bk.floors.length ? bk.floors : v.levels.map((_, k) => k + 1);
+    const ys = [...new Set(fl.map((f) => v.levels[f - 1]).filter((y) => y != null))]; if (!ys.length) return;
+    (v.balconies ||= []).push({ e: q.e.i, u: rd(((s0 + s1) / 2 - q.a0) / (q.a1 - q.a0) * q.e.L), w: rd(s1 - s0), d: rd(bk.d), ys, rail: bk.rail });
+  }));
   vols.forEach((v) => edges(v).forEach((e) => { v.labels[e.i] ||= 'Pročelje ' + (e.i + 1); }));
   const m = { v: 3, src: 'ai', ...vols[0], balcony: null, canopy: null, chimneys: [], colors: { ...DEFAULT_COLORS } };
   if (nP > 1) m.vols = vols.slice(1);
@@ -423,11 +480,12 @@ function volQ(m) {
 export function quantities(m) {
   const V = volsOf(m), qs = V.map(volQ), q0 = qs[0], top = qs[qs.length - 1], tv = V[V.length - 1], sum = (k) => qs.reduce((s, q) => s + q[k], 0);
   const hMax = Math.max(...V.flatMap(storeyHeights)), slabVol = qs.reduce((s, q) => s + q.A * 0.2 * q.floors, 0), perFloors = qs.reduce((s, q) => s + q.per * q.floors, 0);
-  if (V.length === 1) return { ...q0, slabVol, perFloors, terrA: 0, hMax, parts: 1 };
+  const BK = V.flatMap((v) => v.balconies || []), balcA = BK.reduce((s, b) => s + b.w * b.d * b.ys.length, 0), railOf = (k) => BK.filter((b) => (k === 'staklo') === (b.rail === 'staklo')).reduce((s, b) => s + (b.w + 2 * b.d) * b.ys.length, 0), balc = { balcA, balcN: BK.reduce((s, b) => s + b.ys.length, 0), railGlass: railOf('staklo'), railOther: railOf('x') };
+  if (V.length === 1) return { ...q0, slabVol, perFloors, terrA: 0, hMax, parts: 1, ...balc };
   let terrA = 0; for (let i = 0; i < V.length - 1; i++) terrA += Math.max(0, qs[i].A - qs[i + 1].A);
   return { ...q0, floors: sum('floors'), gross: sum('gross'), openA: sum('openA'), net: sum('net'), winA: sum('winA'), winN: sum('winN'), slideA: sum('slideA'), slideN: sum('slideN'), doorA: sum('doorA'), doorN: sum('doorN'), reveal: sum('reveal'),
     kind: top.kind, roofA: top.roofA, roofPlan: top.roofPlan, eaveL: top.eaveL, pipes: top.pipes, pipeL: top.pipes * (tv.y0 + tv.eave + 0.2), pitch: top.pitch, eave: tv.y0 + tv.eave,
-    slabVol, perFloors, terrA, hMax, parts: V.length };
+    slabVol, perFloors, terrA, hMax, parts: V.length, ...balc };
 }
 // vertikalni i horizontalni serklaži omeđenog ziđa (pravila: uglovi, uz otvore > 1,5 m², razmak ≤ 5 m; u razini svake ploče)
 export function serklazi(m, side = 0.25) {
@@ -518,7 +576,7 @@ export const SLOTS_OF = { tlo: ['iskop'], temelji: ['iskop', 'temelji'], konstru
 export const ALL_SLOTS = ['iskop', 'temelji', 'zid', 'ploce', 'krovK', 'pokrov', 'oluk', 'fasada', 'stolarija'];
 export const COST_OF = { tlo: ['iskop'], temelji: ['iskop', 'temelji'], konstrukcija: ['zid'], krovOblik: ['krovK', 'pokrov', 'oluk'], pokrov: ['pokrov'], fasada: ['fasada'], stolarija: ['stolarija'], staklo: ['stolarija'], klizna: ['stolarija'] };
 // okvirne cijene stavki koje ne ovise o odabiru
-export const PRICE = { odvoz: 10, podna: 110, podlozni: 20, serklazi: 230, krovK: 32, osb: 22, oluk: 22, cijev: 20, padBeton: 18, krovIzol: 38, opsav: 28, slivnik: 120, ispuna: 28, humus: 4.5, sljunak: 27, hidro: 16, stropna: 120, armatura: 1.7, terasa: 85 };
+export const PRICE = { odvoz: 10, podna: 110, podlozni: 20, serklazi: 230, krovK: 32, osb: 22, oluk: 22, cijev: 20, padBeton: 18, krovIzol: 38, opsav: 28, slivnik: 120, ispuna: 28, humus: 4.5, sljunak: 27, hidro: 16, stropna: 120, armatura: 1.7, terasa: 85, balkon: 190, ogradaStaklo: 330, ogradaMetal: 170 };
 
 // uskladi odabir (npr. ravni krov ne može imati crijep) i oblik krova u modelu
 export function normBuild(b) {
@@ -591,6 +649,11 @@ export function buildItems(m, b) {
     add('oluk', 'cijev', 'g08', 'krov', 'Vertikalna odvodna cijev', 'm', Q.pipeL, PRICE.cijev, `${Q.pipes} cijevi × ${f2(Q.eave + 0.2)} m (visina strehe).`, okr);
   }
   const pd = { crijep: 'Pokrivanje krova glinenim utorenim crijepom s letvama, kontraletvama i kišnom branom', lim: 'Pokrivanje krova čeličnim plastificiranim limom (falcani/trapezni) na letvama, s paropropusnom folijom', sljunak: 'Hidroizolacija ravnog krova TPO/PVC membranom s geotekstilom i slojem šljunka 5 cm', zeleni: 'Ekstenzivni zeleni krov (sedum) na hidroizolaciji s protukorijenskom zaštitom i drenažom' }[b.pokrov];
+  if (Q.balcA > 0.5) {
+    add('ploce', 'balkoni', 'g03', 'konstrukcija', 'AB konzolne balkonske ploče d=18 cm s toplinskim prekidom, hidroizolacijom i završnom oblogom', 'm²', Q.balcA, PRICE.balkon, `${Q.balcN} balkona iz nacrta, ukupno ${f2(Q.balcA)} m².`, 'balkon');
+    if (Q.railGlass > 0.5) add('stolarija', 'ogradaStaklo', 'g10', 'fasada', 'Staklena ograda balkona, kaljeno lamelirano staklo u aluminijskom profilu, h=110 cm', 'm', Q.railGlass, PRICE.ogradaStaklo, `Tri slobodne strane svakog balkona: ${f2(Q.railGlass)} m.`, 'staklo');
+    if (Q.railOther > 0.5) add('stolarija', 'ogradaMetal', 'g10', 'fasada', 'Ograda balkona, čelična pocinčana i plastificirana ili zidana, h=110 cm', 'm', Q.railOther, PRICE.ogradaMetal, `Tri slobodne strane svakog balkona: ${f2(Q.railOther)} m.`, 'metal');
+  }
   if (Q.terrA > 1) add('pokrov', 'terasa', 'g05', 'krov', 'Ravni krov nižeg dijela zgrade (terasa): hidroizolacija, toplinska izolacija XPS d=20 cm i završni sloj', 'm²', Q.terrA, PRICE.terasa, `Tlocrt nižeg dijela umanjen za tlocrt uvučenog gornjeg dijela: ${f2(Q.terrA)} m².`, 'terasa');
   add('pokrov', 'pokrov', 'g07', 'krov', pd, 'm²', Q.roofA, pk.p, kb, b.pokrov);
   // fasada
