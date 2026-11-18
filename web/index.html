@@ -243,6 +243,30 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 .bimrow span { font-size: 12px; color: var(--muted); line-height: 1.35; }
 .bimrow[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .bimbox input[type=range] { width: 100%; margin: 8px 0 4px; }
+.modesel { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.modesel select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13.5px; font-weight: 600; }
+body.mode-krov details.ogrp:not([data-g="objekt"]):not([data-g="krovOblik"]):not([data-g="pokrov"]), body.mode-krov .stat, body.mode-krov .bsum { display: none; }
+body.mode-krov .topbar .seg, body.mode-krov #ugWrap > .note, body.mode-krov label[for="mf_projektant"], body.mode-krov label[for="mf_nadzor"], body.mode-krov label[for="mf_jamstvoIzvrsenje"], body.mode-krov label[for="mf_jamstvoNedostaci"], body.mode-krov label[for="mf_kaznaPromila"] { display: none; }
+.kp { max-width: 900px; margin: 0 auto 18px; }
+.kp h2 { margin: 0 0 4px; } .kp h3 { margin: 0 0 4px; }
+.kp-quick { display: flex; gap: 8px; margin: 12px 0 8px; align-items: stretch; }
+.kp-quick input, .kp-quick textarea { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; font: inherit; font-size: 15px; background: var(--panel); color: var(--ink); resize: vertical; }
+.kp-quick .btn.on { background: #c0392b; color: #fff; border-color: #c0392b; }
+.kp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.kp-chips .chip { border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.kp-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 70px 104px 118px 30px; gap: 8px; align-items: end; padding: 10px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.kp-row.ai { border-color: #d9a520; }
+.kp-row textarea, .kp-row input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; font-size: 14.5px; background: var(--bg); color: var(--ink); }
+.kp-row textarea { resize: vertical; align-self: stretch; }
+.kp-row label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--muted); }
+.kp-amt { text-align: right; font-weight: 700; font-size: 15px; padding-bottom: 8px; } .kp-amt small { display: block; font-weight: 400; font-size: 11px; color: #9a7400; }
+.kp-sum { margin: 14px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.kp-sum div { display: flex; justify-content: space-between; padding: 3px 0; } .kp-sum .tot { font-size: 19px; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 8px; }
+.kp-act { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.kp-ug { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--panel); max-width: none; }
+.kp-av { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; } .kp-av input { width: 70px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; background: var(--bg); color: var(--ink); }
+.kp, .kp * { box-sizing: border-box; }
+@media (max-width: 720px) { .kp-row { grid-template-columns: repeat(3, minmax(0, 1fr)) 34px; } .kp-row textarea { grid-column: 1 / -1; } .kp-amt { grid-column: 1 / 4; text-align: left; padding: 0; } .kp-quick { flex-wrap: wrap; } .kp-quick input, .kp-quick textarea { flex-basis: 100%; } .modesel { font-size: 0; } }
 .elcard { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; margin: 8px 0; }
 .elcard table { width: 100%; margin-top: 4px; font-size: 13px; }
 .sidetabs button { padding: 7px 8px; font-size: 13.5px; }
@@ -344,13 +368,14 @@ td.pc .dot-ai, td.pc .dot-kat { position: absolute; left: 3px; top: 16px; margin
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.17</small></div>
+  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.18</small></div>
   <button class="proj-btn" id="projBtn" aria-haspopup="true"><span id="projName">Projekt</span> ▾</button>
   <div class="seg" role="group" aria-label="Uloga">
     <button id="roleP" aria-pressed="true">Projektant</button>
     <button id="roleI" aria-pressed="false">Izvođač</button>
   </div>
   <div class="spacer"></div>
+  <label class="modesel">Vrsta programa <select id="modeSel" aria-label="Vrsta programa"><option value="gradnja">Cijela gradnja</option><option value="krov">Krovopokrivači</option></select></label>
   <span class="save-state" id="saveState">Nije spremljeno</span>
   <button class="btn" id="chatToggle">AI asistent</button>
 </header>

@@ -69,3 +69,8 @@
   ravnine rezanja u koordinatama modela; nebo je ShaderMaterial pa se ne reže) i `V.setXray()`. `V.pick` javlja i točku pogotka;
   `elemAt(pt)` nalazi balkon/otvor/zid iz podataka modela (mreže su spojene po materijalu, pa se element ne čita iz mreže).
   Kartica „Model”: `modelHtml()`/`bindModel()`. Vezanje kontrola kartice „Prikaz” samo kad je ona otvorena.
+- Vrsta programa (v0.18): `P.mode` 'gradnja' | 'krov' (zadano zadnje odabrano, `gp.mode`), mijenja se samo preko `setMode()`.
+  Sve što zbraja ili prikazuje stavke ide kroz `ITEMS()` (u vrsti krov samo `inMode`: faza krov ili skupine g06–g08);
+  `P.items` ostaje cijeli. U vrsti krov izvedba puni krovne utore `applySlots(ROOF_SLOTS, true)`; troškovnik je
+  `renderKrovPonuda()`, ugovor `krovContractHtml()` + `krovUgovorExtras()`. Govor u bilo koje polje: `dictToggle(el, btn)`.
+  Stavke iz rečenice (`krovParse`) su ručni unos korisnika (status `rucno`), AI samo razdvaja tekst.

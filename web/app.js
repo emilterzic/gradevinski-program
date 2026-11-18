@@ -1,4 +1,4 @@
-// Građevinski program – prototip v0.17
+// Građevinski program – prototip v0.18
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -136,7 +136,7 @@ function newProject(name, demo) {
     docs: demo ? [{ id: 'demo', name: DEMO_NAME, url: DEMO_PDF_URL, demo: true, pageScale: {} }] : [], docId: demo ? 'demo' : null,
     phases: PHASES.map((p) => ({ ...p })),
     items: demo ? demoItems() : [],
-    build: { ...MD.DEFAULT_BUILD }, buildLinked: !!demo, model: demo ? MD.demoModel() : null, modelType: demo ? 'nacrt' : null, mig: 7,
+    mode: lastMode(), build: { ...MD.DEFAULT_BUILD }, buildLinked: !!demo, model: demo ? MD.demoModel() : null, modelType: demo ? 'nacrt' : null, mig: 7,
     meas: [],
     contract: null,
     chat: demo ? [{ role: 'assistant', content: 'Pozdrav! Pročitao sam primjer nacrta (tlocrti 1:100, presjek sa slojevima, neto površine) i predložio stavke s količinama i okvirnim cijenama. Svaka ima obrazloženje izračuna. Žute su AI prijedlozi: potvrdi ih, ispravi ručno ili izmjeri na nacrtu.\n\nU kartici 3D prikaz → Izvedba biraš temelje, konstrukciju (opeka ili armirani beton), oblik krova, fasadu i stolariju: 3D model i troškovnik se odmah usklade.\n\nMožeš mi pisati ili govoriti, npr. „dodaj stavku ograde balkona 7 m” ili „povećaj fasadu na 180 m²”.' }] : [],
@@ -202,6 +202,7 @@ async function openProject(id) {
   else { try { body = JSON.parse(localStorage.getItem('gp.p_' + id)); } catch {} }
   if (!body) return toast('Projekt nije pronađen.');
   P = JSON.parse(JSON.stringify(body.data));
+  if (!P.mode) P.mode = lastMode(); // stariji projekti: zadnje odabrana vrsta programa
   const mig0 = P.mig; migrate(P);
   undoStack = [];
   try { localStorage.setItem('gp.last', P.id); } catch {}
@@ -634,27 +635,85 @@ function renderMPanel() {
 
 /* ---------- TROŠKOVNIK ---------- */
 const filters = { onlyAi: false, q: '' };
+/* ---------- vrsta programa: cijela gradnja ili samo krov (krovopokrivačke tvrtke) ---------- */
+const ROOF_GROUPS = ['g06', 'g07', 'g08'], ROOF_SLOTS = ['krovK', 'pokrov', 'oluk'];
+function isKrov() { return !!P && P.mode === 'krov'; }
+function inMode(it) { return !isKrov() || it.phase === 'krov' || ['g06', 'g07', 'g08'].includes(it.group); }
+function ITEMS() { return isKrov() ? P.items.filter(inMode) : P.items; } // stavke koje program u odabranoj vrsti prikazuje i zbraja
+function lastMode() { try { return localStorage.getItem('gp.mode') === 'krov' ? 'krov' : 'gradnja'; } catch { return 'gradnja'; } }
+function setMode(m) {
+  P.mode = m === 'krov' ? 'krov' : 'gradnja';
+  try { localStorage.setItem('gp.mode', P.mode); } catch {}
+  if (isKrov() && P.model && !P.items.some((i) => ROOF_SLOTS.includes(i.slot))) applySlots(ROOF_SLOTS, true);
+  if (P.contract && !P.contract.edited) P.contract = null;
+  touch(false); renderAll();
+  toast(isKrov() ? 'Krovopokrivači: zbraja se i prikazuje samo krov.' : 'Cijela gradnja: sve stavke od iskopa do fasade.');
+}
 function totals() {
   let sum = 0, missing = 0;
   const byGroup = {}, byPhase = {};
-  for (const it of P.items) {
+  for (const it of ITEMS()) {
     const v = (it.qty || 0) * (it.price || 0);
     sum += v; byGroup[it.group] = (byGroup[it.group] || 0) + v; byPhase[it.phase] = (byPhase[it.phase] || 0) + v;
     if ((it.qty || 0) > 0 && !(it.price > 0)) missing++;
   }
-  return { sum, pdv: sum * PDV, total: sum * (1 + PDV), byGroup, byPhase, missing, ai: P.items.filter(needsOk).length };
+  return { sum, pdv: sum * PDV, total: sum * (1 + PDV), byGroup, byPhase, missing, ai: ITEMS().filter(needsOk).length };
 }
 function rbMap() {
   const map = {}; let gi = 0;
-  for (const g of GROUPS) { const its = P.items.filter((i) => i.group === g.id); if (!its.length) continue; its.forEach((it, k) => { map[it.id] = ROMAN[gi] + '.' + (k + 1); }); gi++; }
+  for (const g of GROUPS) { const its = ITEMS().filter((i) => i.group === g.id); if (!its.length) continue; its.forEach((it, k) => { map[it.id] = ROMAN[gi] + '.' + (k + 1); }); gi++; }
   return map;
 }
+const KROV_BRZE = [['Demontaža postojećeg pokrova i letava, spuštanje i odvoz', 'm²', 'A', 'g07'], ['Paropropusna-vodonepropusna folija (kišna brana)', 'm²', 'A', 'g07'], ['Letve i kontraletve', 'm²', 'A', 'g06'], ['Sljemenjaci s trakom za provjetravanje', 'm', '', 'g07'], ['Snjegobrani', 'kom', '', 'g07'], ['Krovni prozor s opšavom, dobava i ugradnja', 'kom', '', 'g07'], ['Opšav dimnjaka', 'kom', '', 'g08'], ['Limeni opšavi (uvale, zidni opšavi, vjetarnice)', 'm', '', 'g08'], ['Skela i zaštita gradilišta', 'paušal', '1', 'g07'], ['Odvoz i zbrinjavanje otpada', 'paušal', '1', 'g07']];
+function krovQ() { try { return P.model ? MD.quantities(P.model) : null; } catch { return null; } }
+function krovAdd(desc, unit, qty, price, group) { P.items.push({ id: uid(), group: group || 'g07', desc: (String(desc).trim().charAt(0).toUpperCase() + String(desc).trim().slice(1)).slice(0, 240), unit: unit || 'kom', qty: qty > 0 ? r2(qty) : 0, price: price > 0 ? r2(price) : null, priceSrc: null, phase: 'krov', status: 'rucno', qtyMode: 'manual', basis: 'Upisano u ponudu za krov.' }); }
+// rečenica (upisana ili izgovorena) → stavke; AI ako je dostupan, inače jednostavno čitanje „opis količina jedinica po cijena”
+async function krovParse(text) {
+  const unitOf = (u) => { u = String(u || '').toLowerCase(); return /m2|m²|kvadrat/.test(u) ? 'm²' : /^m$|metar|metara|dužn/.test(u) ? 'm' : /pau/.test(u) ? 'paušal' : /sat/.test(u) ? 'sat' : 'kom'; };
+  if (cap.sample) {
+    try {
+      const Q = krovQ(), r = await askJson(`Krovopokrivač diktira stavke ponude. Iz teksta izdvoji stavke. Vrati {"stavke": [{"opis": puni stručni opis stavke na hrvatskom, "kolicina": broj ili null, "jedinica": "m²" | "m" | "kom" | "paušal" | "sat", "cijena": jedinična cijena u eurima ili null}]}. Ako količina nije rečena, a stavka se odnosi na cijelu krovnu plohu, stavi ${Q ? r2(Q.roofA) : 'null'}. Ništa ne izmišljaj.\n\nTekst: ${text}`, [], 'default');
+      const out = (Array.isArray(r.stavke) ? r.stavke : []).filter((q) => q && q.opis).map((q) => ({ desc: q.opis, unit: unitOf(q.jedinica), qty: +q.kolicina || 0, price: +q.cijena || 0 }));
+      if (out.length) return out;
+    } catch (e) { console.warn(e); }
+  }
+  return text.split(/[;\n]+|,\s+(?=[a-zčćšžđ])/i).map((t) => t.trim()).filter(Boolean).map((t) => { const m = t.match(/^(.*?)(?:\s+(\d+(?:[.,]\d+)?)\s*(m2|m²|m|kom\w*|pau\w*|sat\w*)?)?(?:\s+(?:po|x|×|á)\s*(\d+(?:[.,]\d+)?))?\s*(?:eura|eur|€)?\s*$/i) || []; return { desc: (m[1] || t).trim(), unit: unitOf(m[3]), qty: parseNum(m[2]) || 0, price: parseNum(m[4]) || 0 }; }).filter((q) => q.desc.length > 2);
+}
+function renderKrovPonuda() {
+  const t = totals(), Q = krovQ(), its = ITEMS(), flat = P.build.krovOblik === 'flat';
+  const info = Q ? `Krov iz 3D modela: ploha <b>${fq(r2(Q.roofA))} m²</b>${flat ? '' : `, nagib ${fq(r2(Q.pitch))}°`}, streha ${fq(r2(Q.eaveL))} m, pokrov: ${esc(MD.optOf('pokrov', P.build.pokrov).n.toLowerCase())}. Oblik i pokrov mijenjaš u 3D prikazu.` : 'Model krova još nije složen. Učitaj nacrt i u 3D prikazu pokreni „AI: složi 3D model iz nacrta”, ili upiši količine ručno.';
+  $('#trosWrap').innerHTML = `<div class="kp">
+    <h2>Ponuda za krov</h2><p class="note">${info}</p>
+    <div class="kp-quick"><input id="kpSay" placeholder="Reci ili upiši stavku, npr. „snjegobrani 24 komada po 6 eura”" aria-label="Nova stavka"><button class="btn" id="kpMic" type="button">Govori</button><button class="btn primary" id="kpAdd" type="button">Dodaj</button></div>
+    <div class="kp-chips">${KROV_BRZE.map((q, i) => `<button class="chip" data-kq="${i}" type="button">+ ${esc(q[0].split(',')[0].split('(')[0].trim())}</button>`).join('')}</div>
+    <div class="kp-list">${its.length ? its.map((it) => `<div class="kp-row${needsOk(it) ? ' ai' : ''}" data-id="${it.id}">
+      <textarea data-f="desc" rows="2" aria-label="Opis">${esc(it.desc)}</textarea>
+      <label>Količina<input data-f="qty" inputmode="decimal" value="${it.qty ? fq(it.qty) : ''}"></label>
+      <label>Jed.<input data-f="unit" value="${esc(it.unit || '')}"></label>
+      <label>Cijena €<input data-f="price" inputmode="decimal" value="${it.price ? fq(it.price) : ''}" placeholder="upiši"></label>
+      <div class="kp-amt">${it.price ? eur((it.qty || 0) * it.price) : '–'}${needsOk(it) ? '<small>okvirna cijena, potvrdi</small>' : ''}</div>
+      <button class="icon-btn" data-kdel="${it.id}" aria-label="Ukloni stavku" type="button">×</button></div>`).join('') : '<p class="note">Još nema stavki. Dodaj ih gumbima iznad, upiši ili izgovori.</p>'}</div>
+    <div class="kp-sum"><div><span>Ukupno bez PDV-a</span><b>${eur(t.sum)}</b></div><div><span>PDV 25 %</span><b>${eur(t.pdv)}</b></div><div class="tot"><span>Ukupno</span><b>${eur(t.total)}</b></div>${t.missing ? `<p class="note">Stavki bez cijene: ${t.missing}. Upiši cijenu u polje „Cijena €”.</p>` : ''}</div>
+    <div class="kp-act"><button class="btn" id="kpDoc" type="button">Izvezi ponudu (.docx)</button><button class="btn primary" id="kpUg" type="button">Pripremi ugovor</button></div></div>`;
+  const W = $('#trosWrap'), again = () => { touch(false); renderKrovPonuda(); renderCounts(); };
+  $$('[data-kq]', W).forEach((b) => b.onclick = () => { const q = KROV_BRZE[+b.dataset.kq]; pushUndo(); krovAdd(q[0], q[1], q[2] === 'A' ? (Q ? Q.roofA : 0) : +q[2] || 0, 0, q[3]); again(); });
+  $$('.kp-row [data-f]', W).forEach((inp) => inp.onchange = () => { const it = P.items.find((i) => i.id === inp.closest('.kp-row').dataset.id); if (!it) return; pushUndo(); const f = inp.dataset.f;
+    if (f === 'desc') it.desc = inp.value.trim(); else if (f === 'unit') it.unit = inp.value.trim(); else if (f === 'qty') { it.qty = parseNum(inp.value) || 0; it.qtyMode = 'manual'; } else { it.price = parseNum(inp.value) || null; it.priceSrc = null; }
+    it.status = 'rucno'; again(); });
+  $$('[data-kdel]', W).forEach((b) => b.onclick = () => { pushUndo(); P.items = P.items.filter((i) => i.id !== b.dataset.kdel); again(); });
+  const say = $('#kpSay', W), add = async () => { const txt = say.value.trim(); if (!txt) return; if (dictOn) cap.dict.stop().catch(() => {}); $('#kpAdd', W).disabled = true; const list = await krovParse(txt); if (list.length) { pushUndo(); list.forEach((q) => krovAdd(q.desc, q.unit, q.qty, q.price)); toast(`Dodano stavki: ${list.length}. Provjeri količine i cijene.`); again(); } else { $('#kpAdd', W).disabled = false; toast('Nisam prepoznao stavku. Upiši opis, količinu i cijenu.'); } };
+  $('#kpAdd', W).onclick = add; say.onkeydown = (e) => { if (e.key === 'Enter') add(); };
+  $('#kpMic', W).onclick = () => dictToggle(say, $('#kpMic', W));
+  $('#kpDoc', W).onclick = () => exportDoc();
+  $('#kpUg', W).onclick = () => { if (P.contract && !P.contract.edited) P.contract = null; showView('ugovor'); };
+}
 function renderTroskovnik() {
+  if (isKrov()) return renderKrovPonuda();
   const t = totals(), rb = rbMap(), isI = role === 'izvodjac';
   const priceLbl = isI ? 'Jed. cijena (€)' : 'Proc. cijena (€)';
   let gi = 0;
   const groupsHtml = GROUPS.map((g) => {
-    let its = P.items.filter((i) => i.group === g.id);
+    let its = ITEMS().filter((i) => i.group === g.id);
     if (!its.length) return '';
     const roman = ROMAN[gi++];
     if (filters.onlyAi) its = its.filter(needsOk);
@@ -784,7 +843,7 @@ function safeName(s) { return (s || 'projekt').replace(/[^\p{L}\p{N}]+/gu, '_').
 function exportCsv() {
   const rb = rbMap(), withPrice = role === 'izvodjac' || P.items.some((i) => i.price);
   const rows = [['Rb', 'Vrsta radova', 'Opis', 'Jed. mjere', 'Količina'].concat(withPrice ? ['Jed. cijena (EUR)', 'Iznos (EUR)'] : []).concat(['Faza', 'Status'])];
-  for (const g of GROUPS) for (const it of P.items.filter((i) => i.group === g.id)) {
+  for (const g of GROUPS) for (const it of ITEMS().filter((i) => i.group === g.id)) {
     rows.push([rb[it.id], g.n, it.desc, it.unit, fq(it.qty)].concat(withPrice ? [fp(it.price), fp((it.qty || 0) * (it.price || 0))] : []).concat([phaseName(it.phase), STATUS[it.status]?.n || '']));
   }
   const t = totals();
@@ -793,11 +852,11 @@ function exportCsv() {
   saveFile(`Troskovnik_${safeName(P.name)}.csv`, csv, 'text/csv');
 }
 function troskovnikDocHtml() {
-  const rb = rbMap(), t = totals(), isI = role === 'izvodjac', withPrice = isI || P.items.some((i) => i.price);
-  let body = `<h1 style="text-align:center">${isI ? 'PONUDBENI' : 'PROJEKTANTSKI'} TROŠKOVNIK</h1><p style="text-align:center">${esc(P.name)}${P.meta.lokacija ? ', ' + esc(P.meta.lokacija) : ''}</p>`;
+  const rb = rbMap(), t = totals(), isI = role === 'izvodjac' || isKrov(), withPrice = isI || P.items.some((i) => i.price);
+  let body = `<h1 style="text-align:center">${isKrov() ? 'PONUDA ZA KROVOPOKRIVAČKE RADOVE' : (isI ? 'PONUDBENI' : 'PROJEKTANTSKI') + ' TROŠKOVNIK'}</h1><p style="text-align:center">${esc(P.name)}${P.meta.lokacija ? ', ' + esc(P.meta.lokacija) : ''}</p>`;
   let gi = 0;
   for (const g of GROUPS) {
-    const its = P.items.filter((i) => i.group === g.id); if (!its.length) continue;
+    const its = ITEMS().filter((i) => i.group === g.id); if (!its.length) continue;
     body += `<h3>${ROMAN[gi++]}. ${esc(g.n)}</h3><table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;width:100%"><tr><th>Rb</th><th>Opis</th><th>Jed.</th><th>Količina</th>${withPrice ? '<th>Jed. cijena</th><th>Iznos</th>' : ''}</tr>` +
       its.map((it) => `<tr><td>${rb[it.id]}</td><td>${esc(it.desc)}</td><td>${esc(it.unit)}</td><td align="right">${fq(it.qty)}</td>${withPrice ? `<td align="right">${fp(it.price)}</td><td align="right">${fp((it.qty || 0) * (it.price || 0))}</td>` : ''}</tr>`).join('') +
       (withPrice ? `<tr><td colspan="5" align="right"><b>Ukupno ${esc(g.n)}</b></td><td align="right"><b>${fp(t.byGroup[g.id])}</b></td></tr>` : '') + '</table>';
@@ -805,7 +864,7 @@ function troskovnikDocHtml() {
   if (withPrice) body += `<h3>REKAPITULACIJA</h3><table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;width:100%">${GROUPS.filter((g) => t.byGroup[g.id] !== undefined).map((g) => `<tr><td>${esc(g.n)}</td><td align="right">${fp(t.byGroup[g.id])} €</td></tr>`).join('')}<tr><td>Ukupno bez PDV-a</td><td align="right">${fp(t.sum)} €</td></tr><tr><td>PDV 25 %</td><td align="right">${fp(t.pdv)} €</td></tr><tr><td><b>SVEUKUPNO</b></td><td align="right"><b>${fp(t.total)} €</b></td></tr></table>`;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Troškovnik</title></head><body style="font-family:Arial;font-size:11pt">${body}</body></html>`;
 }
-function exportDoc() { saveFile(`Troskovnik_${safeName(P.name)}.docx`, makeDocx(troskovnikDocHtml()), DOCX_MIME); }
+function exportDoc() { saveFile(`${isKrov() ? 'Ponuda_krov' : 'Troskovnik'}_${safeName(P.name)}.docx`, makeDocx(troskovnikDocHtml()), DOCX_MIME); }
 function exportJson() { saveFile(`Projekt_${safeName(P.name)}.json`, JSON.stringify(P, null, 1), 'application/json'); }
 
 
@@ -906,7 +965,52 @@ const MF = [
   ['izvodjac', 'Izvođač (naziv)'], ['izvodjacOib', 'OIB izvođača'], ['izvodjacAdr', 'Adresa izvođača'],
   ['gradjevina', 'Građevina'], ['lokacija', 'Lokacija (k.č., k.o., adresa)'], ['projektant', 'Projektant / glavni projekt'], ['nadzor', 'Nadzorni inženjer'],
 ];
+function krovContractHtml() {
+  const M = P.meta, t = totals(), d = (x) => esc(x || '______________'), av = Math.min(90, Math.max(0, +M.avansPct >= 0 && M.avansPct !== '' && M.avansPct != null ? +M.avansPct : 30)), its = ITEMS();
+  const rows = its.map((it, i) => `<tr><td>${i + 1}.</td><td>${esc(it.desc)}</td><td class="n">${fq(it.qty)} ${esc(it.unit)}</td><td class="n">${it.price ? fp(it.price) : ''}</td><td class="n">${it.price ? fp((it.qty || 0) * it.price) : ''}</td></tr>`).join('');
+  return `<h2>UGOVOR O IZVOĐENJU KROVOPOKRIVAČKIH RADOVA</h2><p style="text-align:center">br. ______ / ${new Date().getFullYear()}.</p>
+<p>Mjesto i datum sklapanja: ${d(M.mjesto)}, ______________. Ugovorne strane su:</p>
+<p><b>Naručitelj:</b> ${d(M.investitor)}, ${d(M.investitorAdr)}, OIB ${d(M.investitorOib)}</p>
+<p><b>Izvođač:</b> ${d(M.izvodjac)}, ${d(M.izvodjacAdr)}, OIB ${d(M.izvodjacOib)}</p>
+<h4>Članak 1. Predmet ugovora</h4>
+<p>Izvođač se obvezuje izvesti krovopokrivačke i s njima povezane tesarske i limarske radove na građevini ${d(M.gradjevina)}, na adresi ${d(M.lokacija)}, prema ponudi u Prilogu 1 koja je sastavni dio ovog ugovora.</p>
+<h4>Članak 2. Cijena</h4>
+<p>Cijena radova iznosi <b>${fp(t.sum)} €</b> bez PDV-a, PDV 25 % iznosi ${fp(t.pdv)} €, ukupno <b>${fp(t.total)} €</b>. Cijena se obračunava prema stvarno izvedenim količinama i jediničnim cijenama iz Priloga 1. Radovi koji nisu u ponudi izvode se samo uz pisanu suglasnost Naručitelja i dogovorenu cijenu.</p>
+<h4>Članak 3. Rokovi</h4>
+<p>Radovi počinju ${d(M.pocetak)} i traju ${d(M.trajanjeDana)} radnih dana. Rok se produljuje za dane u kojima se zbog kiše, snijega, jakog vjetra ili niskih temperatura radovi na krovu ne mogu sigurno izvoditi, o čemu Izvođač odmah obavještava Naručitelja.</p>
+<h4>Članak 4. Plaćanje</h4>
+<p>Naručitelj plaća predujam od ${fq(av)} % ukupne cijene (${fp(t.total * av / 100)} €) u roku od 3 dana od potpisa ugovora, a ostatak (${fp(t.total * (100 - av) / 100)} €) u roku od 8 dana od primopredaje radova, na temelju računa Izvođača.</p>
+<h4>Članak 5. Materijal, gradilište i otpad</h4>
+<p>Izvođač dobavlja materijal naveden u ponudi, osigurava skelu i zaštitu od pada s visine, štiti građevinu od prokišnjavanja tijekom radova te odvozi i zbrinjava otpad, osim ako je u ponudi drukčije navedeno. Naručitelj osigurava pristup građevini, priključak struje i prostor za odlaganje materijala.</p>
+<h4>Članak 6. Primopredaja i jamstvo</h4>
+<p>Po završetku radova ugovorne strane sastavljaju zapisnik o primopredaji. Izvođač daje jamstvo na izvedene radove u trajanju od ${d(M.jamstveniRokGod)} godine/a od primopredaje. Za ugrađeni materijal vrijedi jamstvo proizvođača. Jamstvo ne obuhvaća oštećenja nastala nestručnim zahvatima trećih osoba ili izvanrednim vremenskim nepogodama.</p>
+<h4>Članak 7. Završne odredbe</h4>
+<p>Na odnose koji nisu uređeni ovim ugovorom primjenjuje se Zakon o obveznim odnosima. Sporove ugovorne strane rješavaju sporazumno, a ako to nije moguće, nadležan je sud prema mjestu građevine. Ugovor je sastavljen u dva istovjetna primjerka, po jedan za svaku stranu.</p>
+<table class="sig"><tr><td>Naručitelj:<br><br>______________________</td><td>Izvođač:<br><br>______________________</td></tr></table>
+<h4>Prilog 1. Ponuda</h4>
+<table><tr><th>#</th><th>Opis</th><th>Količina</th><th>Jed. cijena €</th><th>Iznos €</th></tr>${rows || '<tr><td colspan="5">Ponuda još nema stavki.</td></tr>'}<tr><td colspan="4"><b>Ukupno bez PDV-a</b></td><td class="n"><b>${fp(t.sum)}</b></td></tr></table>`;
+}
+// brzi unos podataka za ugovor: jedna izgovorena ili upisana rečenica popuni polja
+function krovUgovorExtras() {
+  $('#ugWrap').insertAdjacentHTML('afterbegin', `<div class="kp kp-ug"><h3>Brza priprema ugovora</h3><p class="note">Reci ili upiši podatke u jednoj rečenici, npr. „Naručitelj Ivan Horvat, Ilica 5, Zagreb, OIB 12345678901, kuća u Samoboru, Perkovčeva 12, početak 1. prosinca, deset radnih dana, predujam 30 posto, jamstvo 5 godina”. Program popuni polja, a ugovor se složi iz ponude.</p>
+    <div class="kp-quick"><textarea id="ugSay" rows="2" aria-label="Podaci za ugovor"></textarea><button class="btn" id="ugMic" type="button">Govori</button><button class="btn primary" id="ugFill" type="button">Ispuni ugovor</button></div>
+    <label class="kp-av">Predujam (%) <input id="ugAv" inputmode="decimal" value="${P.meta.avansPct ?? 30}"></label></div>`);
+  $('#ugMic').onclick = () => dictToggle($('#ugSay'), $('#ugMic'));
+  $('#ugAv').onchange = (e) => { P.meta.avansPct = Math.min(90, Math.max(0, parseNum(e.target.value) || 0)); P.contract = null; touch(false); renderUgovor(); };
+  $('#ugFill').onclick = async () => {
+    const txt = $('#ugSay').value.trim(); if (!txt) return toast('Reci ili upiši podatke o naručitelju, građevini i rokovima.');
+    if (!cap.sample) return toast('AI ovdje nije dostupan: upiši podatke u polja ispod.');
+    if (dictOn) cap.dict.stop().catch(() => {}); $('#ugFill').disabled = true;
+    try {
+      const r = await askJson(`Iz teksta izdvoji podatke za ugovor o krovopokrivačkim radovima. Vrati JSON samo s poljima koja su u tekstu izričito navedena: {"investitor": ime ili naziv naručitelja, "investitorAdr": adresa naručitelja, "investitorOib": OIB naručitelja, "gradjevina": opis građevine (npr. obiteljska kuća), "lokacija": adresa građevine, "mjesto": mjesto sklapanja ugovora, "pocetak": datum početka radova kako je rečen, "trajanjeDana": broj radnih dana, "avansPct": postotak predujma, "jamstveniRokGod": jamstvo u godinama, "izvodjac": naziv izvođača, "izvodjacAdr": adresa izvođača, "izvodjacOib": OIB izvođača}. Ništa ne izmišljaj i ne dopunjuj.\n\nTekst: ${txt}`, [], 'default');
+      const keys = ['investitor', 'investitorAdr', 'investitorOib', 'gradjevina', 'lokacija', 'mjesto', 'pocetak', 'trajanjeDana', 'avansPct', 'jamstveniRokGod', 'izvodjac', 'izvodjacAdr', 'izvodjacOib']; let n = 0;
+      pushUndo(); keys.forEach((k) => { const v = r[k]; if (v !== undefined && v !== null && String(v).trim() !== '') { P.meta[k] = typeof v === 'number' ? v : String(v).trim(); n++; } });
+      if (n) { P.contract = null; touch(false); renderUgovor(); toast(`Popunjeno polja: ${n}. Provjeri prije potpisa.`); } else { $('#ugFill').disabled = false; toast('U tekstu nisam našao podatke za ugovor.'); }
+    } catch (e) { console.warn(e); $('#ugFill').disabled = false; toast('Nisam uspio pročitati podatke. Upiši ih u polja ispod.'); }
+  };
+}
 function contractHtml() {
+  if (isKrov()) return krovContractHtml();
   const M = P.meta, t = totals(), d = (x) => esc(x || '______________');
   const phases = P.phases.filter((p) => t.byPhase[p.id] > 0);
   const payRows = phases.map((p, i) => `<tr><td>${i + 1}.</td><td>${esc(p.n)}</td><td class="n">${fp(t.byPhase[p.id])} €</td><td class="n">${nfq.format(t.byPhase[p.id] / (t.sum || 1) * 100)} %</td></tr>`).join('');
@@ -942,7 +1046,8 @@ function contractHtml() {
 <table style="border:0;margin-top:40px"><tr><td style="border:0;text-align:center">INVESTITOR<br><br>______________________</td><td style="border:0;text-align:center">IZVOĐAČ<br><br>______________________</td></tr></table>
 <p style="font-size:12px;color:#666;margin-top:24px">Prilog 1: Ugovorni troškovnik. Predložak je radna verzija: prije potpisa ga treba provjeriti pravnik.</p>`;
 }
-function renderUgovor() {
+function renderUgovor() { renderUgovorBase(); if (isKrov()) krovUgovorExtras(); }
+function renderUgovorBase() {
   const M = P.meta;
   if (!P.contract) P.contract = { html: contractHtml(), edited: false, at: Date.now() };
   $('#ugWrap').innerHTML = `
@@ -950,7 +1055,7 @@ function renderUgovor() {
   <div class="ug-grid">
     <form class="form" id="ugForm">
       <h3>Podaci za ugovor</h3>
-      ${MF.map(([k, l]) => `<label for="mf_${k}">${l}<input id="mf_${k}" data-k="${k}" value="${esc(M[k])}"></label>`).join('')}
+      ${MF.map(([k, l]) => `<label for="mf_${k}">${isKrov() ? l.replace('Investitor', 'Naručitelj').replace('investitora', 'naručitelja') : l}<input id="mf_${k}" data-k="${k}" value="${esc(M[k])}"></label>`).join('')}
       <div class="row2"><label for="mf_mjesto">Mjesto<input id="mf_mjesto" data-k="mjesto" value="${esc(M.mjesto)}"></label><label for="mf_pocetak">Početak radova<input type="date" id="mf_pocetak" data-k="pocetak" value="${esc(M.pocetak)}"></label></div>
       <div class="row2"><label for="mf_trajanjeDana">Rok (dana)<input id="mf_trajanjeDana" data-k="trajanjeDana" inputmode="numeric" value="${esc(M.trajanjeDana)}"></label><label for="mf_jamstveniRokGod">Jamstveni rok (god.)<input id="mf_jamstveniRokGod" data-k="jamstveniRokGod" inputmode="numeric" value="${esc(M.jamstveniRokGod)}"></label></div>
       <div class="row2"><label for="mf_jamstvoIzvrsenje">Jamstvo izvršenja (%)<input id="mf_jamstvoIzvrsenje" data-k="jamstvoIzvrsenje" inputmode="decimal" value="${esc(M.jamstvoIzvrsenje)}"></label><label for="mf_jamstvoNedostaci">Jamstvo nedostataka (%)<input id="mf_jamstvoNedostaci" data-k="jamstvoNedostaci" inputmode="decimal" value="${esc(M.jamstvoNedostaci)}"></label></div>
@@ -969,7 +1074,7 @@ function renderUgovor() {
     const go = () => { P.contract = { html: contractHtml(), edited: false, at: Date.now() }; touch(); renderUgovor(); toast('Ugovor generiran iz troškovnika.'); };
     P.contract.edited ? confirmModal('Generirati ponovno?', 'Tvoje ručne izmjene teksta ugovora bit će zamijenjene.', 'Generiraj', go) : go();
   };
-  $('#aiContract').onclick = () => { openChat(); sendChat('Provjeri ugovor o građenju u ovom projektu: što nedostaje ili je rizično za izvođača i investitora prema hrvatskom pravu? Predloži konkretne izmjene članaka.'); };
+  $('#aiContract').onclick = () => { openChat(); sendChat(isKrov() ? 'Provjeri ugovor o izvođenju krovopokrivačkih radova u ovom projektu: što nedostaje ili je rizično za krovopokrivača i naručitelja prema hrvatskom pravu (rokovi zbog vremena, jamstvo, dodatni radovi, plaćanje)? Predloži konkretne izmjene članaka.' : 'Provjeri ugovor o građenju u ovom projektu: što nedostaje ili je rizično za izvođača i investitora prema hrvatskom pravu? Predloži konkretne izmjene članaka.'); };
   $('#expUg').onclick = () => saveFile(`Ugovor_${safeName(P.name)}.docx`, makeDocx(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ugovor</title></head><body style="font-family:'Times New Roman';font-size:12pt">${P.contract.html}</body></html>`), DOCX_MIME);
   const doc = $('#ugDoc');
   doc.oninput = () => { P.contract.html = doc.innerHTML; if (!P.contract.edited) { P.contract.edited = true; } touch(false); };
@@ -989,12 +1094,12 @@ function restore(str) {
 }
 function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 15) undoStack.shift(); }
 // Zamijeni stavke troškovnika koje ovise o izvedbi. Ručno upisane ili izmjerene količine ostaju; cijena ostaje ako se opcija nije promijenila.
-function applySlots(slots) {
+function applySlots(slots, force) {
   if (!ensureModel()) return 0;
   const gen = MD.buildItems(P.model, P.build); let n = 0;
   for (const slot of slots) {
     const old = P.items.filter((i) => i.slot === slot), g = gen.filter((x) => x.slot === slot);
-    if (!old.length && !P.buildLinked) continue;
+    if (!old.length && !P.buildLinked && !force) continue;
     let at = old.length ? P.items.indexOf(old[0]) : -1;
     const fresh = g.map((x) => {
       const o = old.find((i) => i.key === x.key), it = slotToItem(x);
@@ -1043,7 +1148,7 @@ function setObjekt(type, dims) {
     P.modelSpec = MD.specWithDims(P.modelSpec, dims || {}); P.modelDims = undefined; if (dims && (dims.parts || dims.sides)) P.specManual = true; // ručno ispravljeno: usklađivanje to više ne dira
     const nm = MD.modelFromAi(P.modelSpec); if (P.model?.colors) nm.colors = P.model.colors;
     P.model = nm; MD.applyBuild(P.model, P.build); setBuild({ krovOblik: P.modelSpec.roof }, true);
-    const n = P.buildLinked ? applySlots(MD.ALL_SLOTS) : 0; touch(); return n;
+    const n = P.buildLinked ? applySlots(MD.ALL_SLOTS) : isKrov() ? applySlots(ROOF_SLOTS, true) : 0; touch(); return n;
   }
   const base = P.modelType === 'nacrt' ? MD.demoModel() : P.modelType === 'ai' && P.modelBase ? JSON.parse(JSON.stringify(P.modelBase)) : null;
   P.modelDims = MD.clampDims(T ? (T.d || MD.modelDims(base)) : { ...(P.model ? curDims() : {}), ...dims });
@@ -1051,7 +1156,7 @@ function setObjekt(type, dims) {
   if (P.model?.colors) nm.colors = P.model.colors;
   P.model = nm; MD.applyBuild(P.model, P.build);
   if (T?.build) setBuild(T.build, true); else if (T?.ai) setBuild({ krovOblik: base.roof.type }, true);
-  const n = P.buildLinked ? applySlots(MD.ALL_SLOTS) : 0;
+  const n = P.buildLinked ? applySlots(MD.ALL_SLOTS) : isKrov() ? applySlots(ROOF_SLOTS, true) : 0;
   touch();
   return n;
 }
@@ -1359,7 +1464,7 @@ async function aiBuildModel() {
     // veća zgrada ili visoke etaže: zidana izvedba ne prolazi osnovna pravila, pa predlažem armirani beton i temeljnu ploču
     const nFl = MD.floorsAll(base), tall = nFl >= 4 || MD.quantities(base).hMax > 4;
     setBuild({ krovOblik: spec.roof, ...(tall && P.build.konstrukcija !== 'skelet' ? { konstrukcija: 'ab', temelji: 'ploca' } : {}) }, true);
-    if (P.buildLinked) applySlots(MD.ALL_SLOTS);
+    if (P.buildLinked) applySlots(MD.ALL_SLOTS); else if (isKrov()) applySlots(ROOF_SLOTS, true);
     touch();
     const d = MD.modelDims(base), allV = MD.volsOf(base), nOps = allV.reduce((s0, v) => s0 + v.openings.length, 0), conf = Math.round(100 * Math.min(num(ob.pouzdanost) ?? 0.5, num(hv.pouzdanost) ?? 0.5)), notes = [ob.napomena, ...(Array.isArray(hv.napomene) ? hv.napomene : [])].filter(Boolean).map(String);
     const partLines = spec.parts.map((p, i) => `  ${i + 1}. ${p.name}: ${p.floors} ${p.floors === 1 ? 'etaža' : p.floors < 5 ? 'etaže' : 'etaža'}, visine ${p.heights.map((h) => fq(h)).join(' / ')} m${p.shape ? `, tlocrt s ${p.shape.length} uglova` : ''}${p.balconies?.length ? `, balkona na etaži: ${p.balconies.length} (${[...new Set(p.balconies.map((b) => b.rail === 'staklo' ? 'staklena ograda' : b.rail === 'metal' ? 'metalna ograda' : 'zidana ograda'))].join(', ')})` : ''}${p.inset ? `, uvučeno gore ${fq(p.inset.g)} · desno ${fq(p.inset.d)} · dolje ${fq(p.inset.dl)} · lijevo ${fq(p.inset.l)} m` : ''}`).join('\n');
@@ -1380,7 +1485,7 @@ function renderStages3d() {
   const t = totals(); let cum = 0;
   $('#v3dStages').innerHTML = STAGES3D.map((s, i) => {
     const ids = stagePhaseIds(i), sum = ids.reduce((a, id) => a + (t.byPhase[id] || 0), 0); cum += sum;
-    const n = P.items.filter((it) => ids.includes(it.phase)).length;
+    const n = ITEMS().filter((it) => ids.includes(it.phase)).length;
     return `<button data-st="${i}" class="${i < v3dStage ? 'done' : ''}" aria-current="${i === v3dStage}"><b>${i + 1}. ${esc(s.n)}</b><span>${t.sum ? 'do sada ' + eur(cum) : n + ' stavki'}</span></button>`;
   }).join('');
   $$('#v3dStages [data-st]').forEach((b) => b.onclick = () => { v3dStage = +b.dataset.st; V?.setStage(v3dStage); renderStages3d(); });
@@ -1526,7 +1631,7 @@ function show3dInfo(part, pt) {
   const box = $('#v3dInfo');
   if (!part || !PARTS3D[part]) { box.hidden = true; return; }
   const card = elemCard(pt);
-  const def = PARTS3D[part], its = P.items.filter(def.f), sum = its.reduce((a, i) => a + (i.qty || 0) * (i.price || 0), 0);
+  const def = PARTS3D[part], its = ITEMS().filter(def.f), sum = its.reduce((a, i) => a + (i.qty || 0) * (i.price || 0), 0);
   box.hidden = false;
   box.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><b>${esc(def.n)}</b><span class="spacer"></span><button class="icon-btn" id="v3dInfoX" aria-label="Zatvori">×</button></div>${card}
   ${its.length ? `<table>${its.map((i) => `<tr><td>${esc(i.desc)} ${i.status === 'ai' ? '<span class="pill ai">AI</span>' : ''}</td><td class="n">${fq(i.qty)} ${esc(i.unit)}</td><td class="n">${i.price ? nf2.format((i.qty || 0) * i.price) + ' €' : '–'}</td></tr>`).join('')}</table>
@@ -1588,11 +1693,11 @@ function itemsForAi() {
 }
 function systemPrompt() {
   const t = totals();
-  return `Ti si AI asistent u građevinskom programu za izradu troškovnika i ugovora (Hrvatska, EU). Korisnik je ${role === 'izvodjac' ? 'IZVOĐAČ radova (upisuje jedinične cijene, radi ponudu i ugovor)' : 'PROJEKTANT (radi opise stavki i količine, projektantski troškovnik)'}.
+  return `Ti si AI asistent u građevinskom programu za izradu troškovnika i ugovora (Hrvatska, EU). Korisnik je ${role === 'izvodjac' || isKrov() ? 'IZVOĐAČ radova (upisuje jedinične cijene, radi ponudu i ugovor)' : 'PROJEKTANT (radi opise stavki i količine, projektantski troškovnik)'}.
 Odgovaraj kratko, na hrvatskom. Kad korisnik traži promjenu troškovnika (dodaj, promijeni, obriši, cijena, faza), ODMAH je napravi alatima, a u odgovoru kratko reci što si napravio. Sve što ti dodaš ili promijeniš ostaje označeno kao AI prijedlog dok korisnik ne potvrdi.
 Pravila: količine računaj iz podataka s nacrta (kote, površine, sastavi slojeva) i UVIJEK upiši obrazloženje izračuna u polje "obrazlozenje". Ako podatak ne možeš pouzdano odrediti, upiši količinu 0 i u obrazloženju reci kako je izmjeriti. Ne izmišljaj: jasno razlikuj izračun od procjene. Cijene su u EUR bez PDV-a (PDV 25 %). Ne obećavaj pravnu valjanost ugovora.
 Vrste radova (grupa): ${GROUPS.map((g) => g.id + ' = ' + g.n).join('; ')}.
-Faze: ${P.phases.map((p) => p.id + ' = ' + p.n).join('; ')}.
+Faze: ${P.phases.map((p) => p.id + ' = ' + p.n).join('; ')}.${isKrov() ? '\nVRSTA PROGRAMA: KROVOPOKRIVAČI. Korisnik je krovopokrivačka tvrtka i radi ponudu samo za krov. Nove stavke stavljaj samo u skupine g06, g07 ili g08 i u fazu krov; ostale stavke projekta se u ovoj vrsti ne prikazuju i ne zbrajaju. Ugovor je ugovor o izvođenju krovopokrivačkih radova.' : ''}
 Projekt: "${P.name}". Građevina: ${P.meta.gradjevina || 'nije upisano'}. Lokacija: ${P.meta.lokacija || 'nije upisano'}.
 Dokumenti projekta: ${P.docs.map((d) => d.name + (d.id === P.docId ? ' (otvoren)' : '')).join('; ') || 'nema'}. 3D model iz nacrta slaže se gumbom „AI: složi 3D model iz nacrta” (ti ga ne možeš pokrenuti alatom).\nObjekt (alat model_3d mijenja vrstu i dimenzije): ${P.model ? typeOf().n + ', ' + Object.entries(MD.modelDims(P.model)).map(([k, v]) => k + '=' + v).join(', ') : '3D model još ne postoji'}.
 Izvedba (alat odaberi_izvedbu mijenja 3D model i pripadne stavke s okvirnim cijenama): ${MD.BUILD_KEYS.map((k) => k + '=' + P.build[k]).join(', ')}, seizmika=${P.build.seizmika || 'nije odabrano'}. Provjera statike u programu je informativna: uvijek napomeni da konstrukciju dokazuje ovlašteni statičar; šuplja opeka s vodoravnim šupljinama nije nosiva u potresnom području.
@@ -1698,14 +1803,19 @@ function setupDictation() {
   const btn = $('#micBtn'), ta = $('#chatInput');
   if (!cap.dict) { btn.hidden = true; return; }
   btn.hidden = false;
-  cap.dict.onPartial(({ text }) => { ta.value = (dictBase + ' ' + text).trim(); });
-  cap.dict.onFinal(({ text }) => { dictBase = (dictBase + ' ' + text).trim(); ta.value = dictBase; });
-  cap.dict.onState(({ state }) => { dictOn = state === 'listening'; btn.classList.toggle('on', dictOn); btn.setAttribute('aria-label', dictOn ? 'Zaustavi govor' : 'Govori'); });
-  btn.onclick = () => {
-    if (dictOn) { cap.dict.stop().catch(() => {}); return; }
-    dictBase = ta.value.trim();
-    cap.dict.start().catch((e) => { if (e?.code === 'not_granted') { btn.hidden = true; toast('Mikrofon nije dopušten. Možeš pisati.'); } });
-  };
+  const tgt = () => (dictEl && dictEl.isConnected ? dictEl : ta), tb = () => (dictEl && dictEl.isConnected && dictBtn ? dictBtn : btn);
+  cap.dict.onPartial(({ text }) => { tgt().value = (dictBase + ' ' + text).trim(); });
+  cap.dict.onFinal(({ text }) => { dictBase = (dictBase + ' ' + text).trim(); tgt().value = dictBase; });
+  cap.dict.onState(({ state }) => { dictOn = state === 'listening'; [btn, dictBtn].forEach((q) => q && q.classList.toggle('on', dictOn && q === tb())); tb().setAttribute('aria-label', dictOn ? 'Zaustavi govor' : 'Govori'); if (tb() !== btn) tb().textContent = dictOn ? 'Zaustavi' : 'Govori'; });
+  btn.onclick = () => dictToggle(null, null);
+}
+// govor u bilo koje polje (asistent, brzi unos stavke, podaci za ugovor)
+let dictEl = null, dictBtn = null;
+function dictToggle(el, b) {
+  if (!cap.dict) { toast('Glasovni unos ovdje nije dostupan. Možeš pisati.'); return; }
+  if (dictOn) { cap.dict.stop().catch(() => {}); return; }
+  dictEl = el; dictBtn = b; dictBase = (el || $('#chatInput')).value.trim();
+  cap.dict.start().catch((e) => { if (e?.code === 'not_granted') toast('Mikrofon nije dopušten. Možeš pisati.'); });
 }
 
 /* ---------- projekti, uloge, prikazi ---------- */
@@ -1725,7 +1835,7 @@ function setRole(r) {
   $('#roleP').setAttribute('aria-pressed', String(r === 'projektant')); $('#roleI').setAttribute('aria-pressed', String(r === 'izvodjac'));
   if (view === 'troskovnik') renderTroskovnik(); if (view === 'ugovor') renderUgovor();
 }
-function renderAll() { renderCounts(); renderChat(); showView(view); }
+function renderAll() { document.body.classList.toggle('mode-krov', isKrov()); const ms = $('#modeSel'); if (ms) ms.value = P.mode || 'gradnja'; const tt = $('#tab-troskovnik'); if (tt && tt.firstChild) tt.firstChild.textContent = isKrov() ? 'Ponuda ' : 'Troškovnik '; renderCounts(); renderChat(); showView(view); }
 function projMenu() {
   const m = $('#projMenu'), b = $('#projBtn').getBoundingClientRect();
   m.style.left = b.left + 'px'; m.style.top = (b.bottom + 4) + 'px';
@@ -1795,6 +1905,7 @@ async function initCaps() {
 async function boot() {
   $$('.tabs [data-view]').forEach((b) => b.onclick = () => showView(b.dataset.view));
   $('#roleP').onclick = () => setRole('projektant'); $('#roleI').onclick = () => setRole('izvodjac');
+  $('#modeSel').onchange = (e) => { if (P) setMode(e.target.value); };
   $('#projBtn').onclick = (e) => { e.stopPropagation(); $('#projMenu').classList.contains('open') ? $('#projMenu').classList.remove('open') : projMenu(); };
   document.addEventListener('click', (e) => { if (!$('#projMenu').contains(e.target)) $('#projMenu').classList.remove('open'); });
   $('#modalBg').addEventListener('click', (e) => { if (e.target.id === 'modalBg') closeModal(); });
