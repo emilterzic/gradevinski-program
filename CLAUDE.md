@@ -74,3 +74,14 @@
   `P.items` ostaje cijeli. U vrsti krov izvedba puni krovne utore `applySlots(ROOF_SLOTS, true)`; troškovnik je
   `renderKrovPonuda()`, ugovor `krovContractHtml()` + `krovUgovorExtras()`. Govor u bilo koje polje: `dictToggle(el, btn)`.
   Stavke iz rečenice (`krovParse`) su ručni unos korisnika (status `rucno`), AI samo razdvaja tekst.
+- Brzina troškovnika (v0.19): `renderTroskovnik` crta najviše `TR_LIM` redova po skupini kad projekt ima više od 300 stavki
+  („Prikaži još”), događaji idu preko jednog slušača na `#trosWrap` (ne vezati slušače po redu), izmjena polja zove
+  `trRow(it)` + `trSums()` umjesto cijelog crtanja. Visine tekstnih polja samo preko `autoGrowAll` (čitanje pa upis).
+  Mjera: `/tmp/perf.py` (20 000 stavki: crtanje ispod 0,5 s, izmjena polja ispod 50 ms).
+- Katalog i cjenik (v0.19): `web/katalog.js` (`KAT`, zapis 'opis|jedinica', bez cijena) učitava se tek u `katIndex()`;
+  `searchModal(group)` (Ctrl+K). Cjenik korisnika `CJ` (ključ `cjKey(opis)`) u dokumentima baze `cjenik` + `cjenik_<i>`
+  (po 800 redova) ili `gp.cjenik`; uči se u `cjenikLearn(it)` samo iz cijena koje je upisao korisnik, nikad iz kataloških.
+- Krov (v0.19): `P.krov {marza, otpad}`; `kf()` množi cijene u `totals()`, ispisu ponude i ugovoru (marža se ne ispisuje);
+  `krovMaterijal()` i `krovRubovi()` računaju popis materijala iz `roofGeom` (potrošnje su okvirne i tako označene).
+- 3D (v0.19): `V.pick` javlja i najbliži ugao (`snap`); mjerenje `meas3` + `V.setMeasure(a, b)`; pogledi `P.views[{n, p, t}]`,
+  `V.getCam()` / `V.setCam(p, t)`.

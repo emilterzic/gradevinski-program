@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: prototip v0.18 (studeni 2026.)
+## Stanje: prototip v0.19 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -59,6 +59,13 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   izdvajanje etaže, presjek (uzdužni, poprečni, vodoravni) s klizačem, prozirni prikaz, svojstva kliknutog elementa
   (prozor, vrata, zid, balkon: mjere, etaža, pročelje, izvedba) uz stavke troškovnika. AI sažetak ima red „kontrola”
   (pročelja n/4, otvori pročitani i bez zida, balkoni viđeni na pročeljima a nisu u modelu).
+- **Brzina troškovnika, katalog i cjenik** (v0.19): troškovnik s 20 000 stavki crta se za oko 0,4 s, a izmjena jednog
+  polja za oko 30 ms (prije: 1000 stavki 3 s po svakoj izmjeni). Katalog stavki (`web/katalog.js`, oko 300 opisa po
+  vrstama radova, bez cijena) s pretragom (Ctrl+K ili „Katalog i cjenik”). Moj cjenik: cijene koje korisnik upiše pamte
+  se po korisniku i nude pri sljedećem unosu iste stavke; uvoz i izvoz cjenika u .csv (do 50 000 redova).
+  Krovopokrivači: marža (%) koja se ne ispisuje, popis materijala za narudžbu iz površine krova, sljemena, grebena i
+  zabata s postotkom otpada (okvirne potrošnje, provjeriti prema proizvođaču). 3D: mjerenje udaljenosti između dvije
+  točke (hvata ugao) i spremljeni pogledi uz projekt.
 - **Vrsta programa** (v0.18): izbornik gore desno („Cijela gradnja” | „Krovopokrivači”), pamti se po projektu.
   Krovopokrivači: isti nacrti i 3D, a zbraja se i prikazuje samo krov (skupine tesarski, krovopokrivački, limarski i faza
   krov). Kartica „Ponuda”: podaci o krovu iz 3D modela, brzi gumbi za česte stavke, unos rečenicom upisanom ili

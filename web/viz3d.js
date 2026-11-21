@@ -708,6 +708,19 @@ export class Viz3D {
     this.placeSun(pos, tgt);
     this.anim(pos, tgt, instant);
   }
+  // mjerenje: dvije točke i crta između njih, uvijek vidljive (bez dubinskog testa)
+  setMeasure(a, b) {
+    if (this.meas) { this.scene.remove(this.meas); this.meas.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); this.meas = null; }
+    if (a) {
+      const g = new THREE.Group(), s = Math.max(0.05, this.camera.position.distanceTo(this.controls.target) * 0.006);
+      [a, b].filter(Boolean).forEach((p) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 14, 10), new THREE.MeshBasicMaterial({ color: 0xe8590c, depthTest: false })); m.position.set(p[0], p[1], p[2]); m.renderOrder = 999; g.add(m); });
+      if (b) { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2])]), new THREE.LineBasicMaterial({ color: 0xe8590c, depthTest: false })); l.renderOrder = 999; g.add(l); }
+      this.scene.add(g); this.meas = g;
+    }
+    this.needFull = true;
+  }
+  getCam() { const c = this.camera.position, t = this.controls.target; return { p: [c.x, c.y, c.z], t: [t.x, t.y, t.z] }; }
+  setCam(p, t) { const pos = new THREE.Vector3(p[0], p[1], p[2]), tgt = new THREE.Vector3(t[0], t[1], t[2]); this.placeSun(pos, tgt); this.anim(pos, tgt); }
   anim(pos, tgt, instant) {
     const cam = this.camera, ctl = this.controls, p0 = cam.position.clone(), t0 = ctl.target.clone(), t1 = performance.now();
     if (instant || matchMedia('(prefers-reduced-motion: reduce)').matches) { cam.position.copy(pos); ctl.target.copy(tgt); ctl.update(); this.needFull = true; return; }
@@ -734,7 +747,10 @@ export class Viz3D {
     const cp = this.renderer.clippingPlanes || []; // odrezani dio modela se ne može kliknuti
     const hit = this.ray.intersectObjects(this.parts.filter((p) => p.visible), true).find((h) => cp.every((pl) => pl.distanceToPoint(h.point) >= -0.01));
     let o = hit?.object; while (o && !o.userData?.part) o = o.parent;
-    this.api.onPick && this.api.onPick(o ? o.userData.part : null, hit && o ? [hit.point.x, hit.point.y, hit.point.z] : null);
+    // najbliži ugao pogođenog trokuta (za mjerenje): hvata se ako je unutar 0,35 m
+    let snap = null;
+    if (hit && hit.face && hit.object.geometry?.attributes?.position) { const pa = hit.object.geometry.attributes.position, w = new THREE.Vector3(); let best = 0.35; for (const i of [hit.face.a, hit.face.b, hit.face.c]) { w.fromBufferAttribute(pa, i); hit.object.localToWorld(w); const d = w.distanceTo(hit.point); if (d < best) { best = d; snap = [w.x, w.y, w.z]; } } }
+    this.api.onPick && this.api.onPick(o ? o.userData.part : null, hit && o ? [hit.point.x, hit.point.y, hit.point.z] : null, snap);
   }
   // slika visoke rezolucije: višestruko uzorkovanje (SSAA 8×) + ambijentalna okluzija, s natpisom
   async snapshot(w = 2560, h = 1440, caption = '') {
