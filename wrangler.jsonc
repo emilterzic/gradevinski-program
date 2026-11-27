@@ -3,6 +3,8 @@
   "name": "gradevinski-program",
   "main": "server/worker.js",
   "compatibility_date": "2026-11-13",
+  // javna adresa <naziv>.<račun>.workers.dev mora biti uključena dok nema vlastite domene
+  "workers_dev": true,
   "assets": { "directory": "./web", "binding": "ASSETS", "run_worker_first": true },
   "d1_databases": [{ "binding": "DB", "database_name": "bis-gradevinski-program", "database_id": "d734744c-c163-4726-b6b2-0baa6f2478fd" }],
   "observability": { "enabled": true }
