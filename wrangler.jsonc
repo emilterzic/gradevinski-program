@@ -1,6 +1,6 @@
 {
   // BIS građevinski program na Cloudflareu: Worker (prijava, podaci) + statičke datoteke programa iz mape web/
-  "name": "bis-gradevinski-program",
+  "name": "gradevinski-program",
   "main": "server/worker.js",
   "compatibility_date": "2026-11-13",
   "assets": { "directory": "./web", "binding": "ASSETS", "run_worker_first": true },

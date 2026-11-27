@@ -118,7 +118,7 @@ Faza 0 temelj → 1 MVP Hrvatska → 2 AI izmjera nacrta → 3 druga država →
 
 ## Cloudflare (web inačica)
 
-- `wrangler.jsonc`: Worker `bis-gradevinski-program`, statičke datoteke iz `web/` (`run_worker_first`), baza D1 `DB`.
+- `wrangler.jsonc`: Worker `gradevinski-program`, statičke datoteke iz `web/` (`run_worker_first`), baza D1 `DB`.
 - Baza: `server/schema.sql` (naredbe su ponovljive). Nacrti idu u R2 ako se doda binding `FILES`, inače u D1 u dijelovima.
 - Objava: Cloudflare → Workers & Pages → Create application → GitHub → ovaj repozitorij → Deploy (naredba `npx wrangler deploy`).
   Svaki `git push` na `main` nakon toga sam objavljuje novu inačicu.
