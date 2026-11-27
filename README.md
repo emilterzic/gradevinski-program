@@ -1,9 +1,9 @@
-# Građevinski program
+# BIS građevinski program
 
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: prototip v0.19 (studeni 2026.)
+## Stanje: prototip v0.20 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -59,6 +59,11 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   izdvajanje etaže, presjek (uzdužni, poprečni, vodoravni) s klizačem, prozirni prikaz, svojstva kliknutog elementa
   (prozor, vrata, zid, balkon: mjere, etaža, pročelje, izvedba) uz stavke troškovnika. AI sažetak ima red „kontrola”
   (pročelja n/4, otvori pročitani i bez zida, balkoni viđeni na pročeljima a nisu u modelu).
+- **Naziv i vrste programa** (v0.20): program se zove BIS građevinski program (Bridgeline Intelligence Systems).
+  Vrste programa su zapisi u `MODES` u `web/app.js`: Cijela gradnja, Krovopokrivači, Zemljani radovi (iskopi, odvoz,
+  nasipi, podbetoniranje temelja; izračun broja tura kamiona), Građevinska stolarija (pozicije prozora i vrata iz
+  otvora 3D modela, ponuda po pozicijama). Svaka struka ima svoju ponudu, brze stavke, katalog i ugovor.
+  `allowedModes()` je mjesto gdje će se vrste otključavati prema licenci tvrtke nakon prijave.
 - **Brzina troškovnika, katalog i cjenik** (v0.19): troškovnik s 20 000 stavki crta se za oko 0,4 s, a izmjena jednog
   polja za oko 30 ms (prije: 1000 stavki 3 s po svakoj izmjeni). Katalog stavki (`web/katalog.js`, oko 300 opisa po
   vrstama radova, bez cijena) s pretragom (Ctrl+K ili „Katalog i cjenik”). Moj cjenik: cijene koje korisnik upiše pamte

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Građevinski program – prototip</title>
+<title>BIS građevinski program – prototip</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -245,8 +245,8 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 .bimbox input[type=range] { width: 100%; margin: 8px 0 4px; }
 .modesel { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .modesel select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13.5px; font-weight: 600; }
-body.mode-krov details.ogrp:not([data-g="objekt"]):not([data-g="krovOblik"]):not([data-g="pokrov"]), body.mode-krov .stat, body.mode-krov .bsum { display: none; }
-body.mode-krov .topbar .seg, body.mode-krov #ugWrap > .note, body.mode-krov label[for="mf_projektant"], body.mode-krov label[for="mf_nadzor"], body.mode-krov label[for="mf_jamstvoIzvrsenje"], body.mode-krov label[for="mf_jamstvoNedostaci"], body.mode-krov label[for="mf_kaznaPromila"] { display: none; }
+body.mode-krov details.ogrp:not([data-g="objekt"]):not([data-g="krovOblik"]):not([data-g="pokrov"]), body.mode-zemlja details.ogrp:not([data-g="objekt"]):not([data-g="tlo"]):not([data-g="temelji"]), body.mode-stolarija details.ogrp:not([data-g="objekt"]):not([data-g="stolarija"]):not([data-g="staklo"]):not([data-g="klizna"]), body.mode-trade .stat, body.mode-trade .bsum { display: none; }
+body.mode-trade .topbar .seg, body.mode-trade #ugWrap > .note, body.mode-trade label[for="mf_projektant"], body.mode-trade label[for="mf_nadzor"], body.mode-trade label[for="mf_jamstvoIzvrsenje"], body.mode-trade label[for="mf_jamstvoNedostaci"], body.mode-trade label[for="mf_kaznaPromila"] { display: none; }
 .kp { max-width: 900px; margin: 0 auto 18px; }
 .kp h2 { margin: 0 0 4px; } .kp h3 { margin: 0 0 4px; }
 .kp-quick { display: flex; gap: 8px; margin: 12px 0 8px; align-items: stretch; }
@@ -381,7 +381,7 @@ td.pc .dot-ai, td.pc .dot-kat { position: absolute; left: 3px; top: 16px; margin
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><h1>Građevinski program</h1><small>prototip v0.19</small></div>
+  <div class="brand"><h1>BIS građevinski program</h1><small>prototip v0.20</small></div>
   <button class="proj-btn" id="projBtn" aria-haspopup="true"><span id="projName">Projekt</span> ▾</button>
   <div class="seg" role="group" aria-label="Uloga">
     <button id="roleP" aria-pressed="true">Projektant</button>

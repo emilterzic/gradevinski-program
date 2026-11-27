@@ -85,3 +85,11 @@
   `krovMaterijal()` i `krovRubovi()` računaju popis materijala iz `roofGeom` (potrošnje su okvirne i tako označene).
 - 3D (v0.19): `V.pick` javlja i najbliži ugao (`snap`); mjerenje `meas3` + `V.setMeasure(a, b)`; pogledi `P.views[{n, p, t}]`,
   `V.getCam()` / `V.setCam(p, t)`.
+- Naziv (v0.20): BIS građevinski program (Bridgeline Intelligence Systems). Vrste programa su u registru `MODES`
+  {n, groups, slots, phase?, g, izv, naslov, doc, file, tko, primjer, toast, ugovor, predmet, rok, cl5n, cl5, brze[]}:
+  nova struka = novi zapis + CSS pravilo `body.mode-<id> details.ogrp:not(...)` za vidljive skupine izvedbe.
+  `isTrade()` / `TM()` za sve što je zajedničko strukama; `isKrov()` samo za krov (materijal, ploha krova).
+  `allowedModes()` vraća vrste koje korisnik smije otvoriti (u prototipu sve; u proizvodu prema licenci).
+  Stolarija po pozicijama: `stolPoz()`, stavke nose `poz`, `P.krov.poz = true` i tada `applySlots` preskače utor `stolarija`.
+  Dodatni blok ponude po struci: `tradeExtra(Q)` → {html, bind}. Postavke struke po projektu su u `P.krov`
+  {marza, otpad, poz, rast, kam} (naziv polja je povijesni).
