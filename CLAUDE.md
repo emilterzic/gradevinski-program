@@ -93,3 +93,12 @@
   Stolarija po pozicijama: `stolPoz()`, stavke nose `poz`, `P.krov.poz = true` i tada `applySlots` preskače utor `stolarija`.
   Dodatni blok ponude po struci: `tradeExtra(Q)` → {html, bind}. Postavke struke po projektu su u `P.krov`
   {marza, otpad, poz, rast, kam} (naziv polja je povijesni).
+- Web inačica (v0.21): `server/worker.js` (Cloudflare Worker, D1 `env.DB`, statika `env.ASSETS` iz `web/`, neobavezno R2
+  `env.FILES`), stranice prijave/administracije u `server/pages.js`, shema u `server/schema.sql`, konfiguracija `wrangler.jsonc`.
+  Svaki zahtjev prolazi kroz Worker: bez valjane sesije nema ni programa ni podataka. Korisnik je valjan ako je `active = 1`
+  i `valid_until` nije prošao (administrator nema rok). Lozinka: preglednik je rasteže (PBKDF2, 310 000 koraka, sol
+  `bis-gp:<korisničko ime>`), poslužitelj sprema SHA-256(sol + ključ); zato se korisničko ime ne može mijenjati.
+  U `web/app.js` `webCaps()` zamjenjuje `cap.db/assets/dl/dict` pozivima `/api/...`; `WEB` je prijavljeni korisnik,
+  `allowedModes()` čita njegove vrste programa. AI (`cap.sample`) na webu još nije spojen.
+  Prije objave: `node tests/server.test.mjs` (uz `node tests/model.test.mjs`). Repozitorij je javan: u njega ne idu
+  nacrti, lozinke ni ključevi.

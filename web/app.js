@@ -1,10 +1,10 @@
-// BIS građevinski program – prototip v0.20
+// BIS građevinski program – prototip v0.21
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('./lib/pdf.worker.min.js', import.meta.url).href;
 
-const DEMO_PDF_URL = '/_blob/bae2a8cc1f83b4982451d63eb012771a';
+let DEMO_PDF_URL = '/_blob/bae2a8cc1f83b4982451d63eb012771a'; // na web inačici: /demo/nacrti.pdf (ako je datoteka postavljena)
 const DEMO_NAME = 'Primjer nacrta: obiteljska kuća P+1.pdf';
 const PDV = 0.25;
 
@@ -202,7 +202,7 @@ async function openProject(id) {
   else { try { body = JSON.parse(localStorage.getItem('gp.p_' + id)); } catch {} }
   if (!body) return toast('Projekt nije pronađen.');
   P = JSON.parse(JSON.stringify(body.data));
-  if (!P.mode) P.mode = lastMode(); // stariji projekti: zadnje odabrana vrsta programa
+  if (!P.mode || !allowedModes().includes(P.mode)) P.mode = lastMode(); // stariji projekti i vrste izvan licence
   const mig0 = P.mig; migrate(P);
   undoStack = [];
   try { localStorage.setItem('gp.last', P.id); } catch {}
@@ -277,7 +277,7 @@ async function loadPdfForProject() {
   pdfDoc = null; pageInfo = {}; curPage = 1;
   if (P.pdf && P.pdf.url && !P.pdf.url.startsWith('__')) {
     try { pdfDoc = await pdfjsLib.getDocument({ url: P.pdf.url, isEvalSupported: false }).promise; }
-    catch (e) { console.warn(e); toast('Nacrt se ne može otvoriti. Učitaj PDF ponovno.'); }
+    catch (e) { console.warn(e); if (!P.pdf.demo) toast('Nacrt se ne može otvoriti. Učitaj PDF ponovno.'); }
   } else if (P.pdf && P.pdf.session && sessionPdf[P.pdf.id]) {
     pdfDoc = await pdfjsLib.getDocument({ data: sessionPdf[P.pdf.id].slice(0), isEvalSupported: false }).promise;
   }
@@ -672,10 +672,10 @@ function linkSlots() { return P.krov && P.krov.poz ? MD.ALL_SLOTS.filter((x) => 
 function inMode(it) { if (!isTrade()) return true; const T = TM(); return T.groups.includes(it.group) || T.slots.includes(it.slot) || (!!T.phase && it.phase === T.phase); }
 function ITEMS() { return isTrade() ? P.items.filter(inMode) : P.items; } // stavke koje program u odabranoj vrsti prikazuje i zbraja
 // koje vrste korisnik smije otvoriti; u prototipu sve, u proizvodu prema licenci tvrtke (prijava)
-function allowedModes() { return Object.keys(MODES); }
-function lastMode() { try { const m = localStorage.getItem('gp.mode'); return MODES[m] && allowedModes().includes(m) ? m : 'gradnja'; } catch { return 'gradnja'; } }
+function allowedModes() { const all = Object.keys(MODES); if (!WEB || WEB.role === 'admin') return all; const al = all.filter((k) => (WEB.modes || []).includes(k)); return al.length ? al : ['gradnja']; }
+function lastMode() { try { const al = allowedModes(); let m = null; try { m = localStorage.getItem('gp.mode'); } catch {} return al.includes(m) ? m : al[0]; } catch { return 'gradnja'; } } // poziva se i pri učitavanju modula, prije nego što MODES postoji
 function setMode(m) {
-  P.mode = MODES[m] && allowedModes().includes(m) ? m : 'gradnja';
+  P.mode = allowedModes().includes(m) ? m : allowedModes()[0];
   try { localStorage.setItem('gp.mode', P.mode); } catch {}
   if (isTrade() && P.model && tradeSlots().length && !P.items.some((i) => TM().slots.includes(i.slot))) applySlots(tradeSlots(), true);
   if (P.contract && !P.contract.edited) P.contract = null;
@@ -1077,7 +1077,7 @@ async function saveFile(filename, data, mime) {
     try { await cap.dl.save({ filename, data: data instanceof Blob ? data : new Blob([data], { type: mime }) }); toast('Datoteka je spremljena.'); return; }
     catch (e) { if (e?.code === 'declined') return; if (e?.code === 'rate_limited') return toast('Već je otvoren prozor za spremanje.'); console.warn(e); }
   }
-  if (typeof data !== 'string') return toast('Preuzimanje nije dostupno u ovom prikazu. Otvori program na claude.ai.');
+  if (typeof data !== 'string') return toast('Preuzimanje nije dostupno u ovom prikazu.');
   try { await navigator.clipboard.writeText(data); toast('Preuzimanje nije dostupno ovdje: sadržaj je kopiran u međuspremnik.'); }
   catch { toast('Preuzimanje nije dostupno u ovom prikazu.'); }
 }
@@ -1504,7 +1504,7 @@ function show3dEmpty(on) {
   el.innerHTML = `<div class="card"><h2>3D model još nije složen</h2>
     <p>${docs.length ? `Za ovaj projekt još nema 3D modela. Mogu ga složiti iz otvorenog dokumenta „${esc(P.pdf?.name || '')}”: pročitam tlocrt, presjek i pročelja i predložim model koji zatim provjeriš i ispraviš.` : 'Učitaj nacrte (PDF) u kartici Nacrt pa ću iz njih složiti 3D model, ili zadaj vrstu objekta i dimenzije.'}</p>
     <div class="btns"><button class="btn primary" id="e3Ai" ${pdfDoc ? '' : 'disabled'}>AI: složi 3D model iz nacrta</button><button class="btn" id="e3Dim">Zadaj vrstu objekta i dimenzije</button></div>
-    ${pdfDoc && !can ? '<p class="note">AI čitanje nacrta radi samo kad je program otvoren na claude.ai i dopušten mu je Claude.</p>' : ''}
+    ${pdfDoc && !can ? (WEB ? '<p class="note">AI čitanje nacrta na ovoj adresi još nije uključeno. Model zadaj vrstom objekta i dimenzijama.</p>' : '<p class="note">AI čitanje nacrta radi samo kad je program otvoren na claude.ai i dopušten mu je Claude.</p>') : ''}
     <p class="note">Model iz nacrta je AI prijedlog: jedan obris zgrade, etaže, krov i otvori s pročelja. Sve dimenzije poslije možeš ručno ispraviti.</p></div>`;
   $('#v3dSide').innerHTML = '<p class="note">Izvedba, cijene i statika pojavit će se kad postoji 3D model objekta.</p>'; $('#v3dStages').innerHTML = '';
   $('#e3Ai').onclick = () => aiBuildModel();
@@ -1554,7 +1554,7 @@ async function aiBuildModel() {
   if (aiModelBusy) return toast('AI već slaže model, pričekaj.');
   if (!pdfDoc) return toast('Prvo učitaj nacrte (PDF) u kartici Nacrt.');
   openChat();
-  if (!cap.sample || !cap.imagesOk) return addMsg('sys', 'AI čitanje nacrta ovdje nije dostupno (otvori program na claude.ai i dopusti mu korištenje Claudea). 3D model možeš zadati vrstom objekta i dimenzijama.');
+  if (!cap.sample || !cap.imagesOk) return addMsg('sys', (WEB ? 'AI čitanje nacrta na ovoj adresi još nije uključeno.' : 'AI čitanje nacrta ovdje nije dostupno (otvori program na claude.ai i dopusti mu korištenje Claudea).') + ' 3D model možeš zadati vrstom objekta i dimenzijama.');
   aiModelBusy = true; const say = (t) => { addMsg("sys", t); aiReadLog({ ok: null, step: t }); }, num = (v) => (isFinite(+v) ? +v : null);
   try {
     const memo = (aiMemo[P.docId] ||= {}), MAXI = cap.maxImages || 4;
@@ -2008,7 +2008,7 @@ let busy = false, abortCtl = null;
 async function sendChat(text, opts = {}) {
   text = (text || '').trim();
   if (!text || busy) return;
-  if (!cap.sample) { addMsg('user', text); addMsg('sys', 'AI asistent ovdje nije dostupan (otvori program na claude.ai i dopusti mu korištenje Claudea). Sve možeš napraviti i ručno.'); return; }
+  if (!cap.sample) { addMsg('user', text); addMsg('sys', WEB ? 'AI asistent na ovoj adresi još nije uključen. Sve možeš napraviti i ručno.' : 'AI asistent ovdje nije dostupan (otvori program na claude.ai i dopusti mu korištenje Claudea). Sve možeš napraviti i ručno.'); return; }
   openChat();
   P.chat.push({ role: 'user', content: text + (opts.imageNote ? '\n[' + opts.imageNote + ']' : '') });
   const reply = { role: 'assistant', content: '…', log: [] };
@@ -2156,8 +2156,54 @@ async function onJsonFile(file) {
 }
 
 /* ---------- pokretanje ---------- */
+// ---------- web inačica (v0.21): program na vlastitoj adresi, iza prijave ----------
+// Kad program ne radi unutar claude.ai, a poslužitelj poznaje prijavljenog korisnika (/api/me), podaci se spremaju
+// po korisniku na poslužitelj. Sučelje je isto kao cap.db/cap.assets/cap.dl/cap.dict pa ostatak programa ne zna razliku.
+let WEB = null;
+async function webCaps() {
+  let me = null;
+  try { const r = await fetch('/api/me', { headers: { accept: 'application/json' } }); if (r.ok && (r.headers.get('content-type') || '').includes('json')) me = await r.json(); } catch {}
+  if (!me || !me.id) return;
+  WEB = me;
+  DEMO_PDF_URL = '/demo/nacrti.pdf'; if (P) { (P.docs || []).forEach((d) => { if (d.demo) d.url = DEMO_PDF_URL; }); if (P.pdf && P.pdf.demo) P.pdf.url = DEMO_PDF_URL; }
+  const call = async (path, opt) => { const r = await fetch(path, opt); if (r.status === 401) { location.href = '/login'; throw new Error('Prijava je istekla.'); } if (!r.ok) { let o = {}; try { o = await r.json(); } catch {} throw new Error(o.error || 'Spremanje nije uspjelo.'); } return r.json(); };
+  cap.uid = me.id;
+  cap.db = { collection: () => ({
+    doc: (id) => ({
+      get: async () => { const o = await call('/api/docs/' + encodeURIComponent(id)); return { exists: !!o.exists, data: () => o.data }; },
+      set: (obj) => call('/api/docs/' + encodeURIComponent(id), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(obj) }),
+      delete: () => call('/api/docs/' + encodeURIComponent(id), { method: 'DELETE' }),
+    }),
+    get: async () => { const o = await call('/api/docs'); return { docs: o.docs.map((d) => ({ id: d.id, data: () => ({ name: d.name, updatedAt: d.updatedAt }) })) }; },
+  }) };
+  cap.assets = { upload: (blob) => call('/api/files', { method: 'POST', headers: { 'content-type': blob.type || 'application/pdf' }, body: blob }) };
+  cap.dl = { save: async ({ filename, data }) => { const a = document.createElement('a'); a.href = URL.createObjectURL(data); a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); } };
+  // govor: prepoznavanje u pregledniku (Chrome, Edge); gdje ga nema, gumb „Govori” javlja da nije dostupno
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SR) {
+    const cb = {}; let rec = null;
+    cap.dict = { onPartial: (f) => { cb.p = f; }, onFinal: (f) => { cb.f = f; }, onState: (f) => { cb.s = f; },
+      start: () => new Promise((res, rej) => { rec = new SR(); rec.lang = 'hr-HR'; rec.interimResults = true; rec.continuous = true;
+        rec.onstart = () => { cb.s && cb.s({ state: 'listening' }); res(); };
+        rec.onresult = (e) => { for (let i = e.resultIndex; i < e.results.length; i++) { const t = e.results[i][0].transcript.trim(); if (e.results[i].isFinal) cb.f && cb.f({ text: t }); else cb.p && cb.p({ text: t }); } };
+        rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') rej(Object.assign(new Error('mikrofon'), { code: 'not_granted' })); };
+        rec.onend = () => { cb.s && cb.s({ state: 'idle' }); };
+        try { rec.start(); } catch (x) { rej(x); } }),
+      stop: async () => { try { rec && rec.stop(); } catch {} } };
+  }
+  $('#aiState').textContent = 'uskoro';
+  // korisnik i odjava u zaglavlju
+  const who = document.createElement('div'); who.className = 'webuser';
+  who.innerHTML = `<span title="${esc(me.username)}">${esc(me.name || me.username)}</span>${me.role === 'admin' ? '<button class="btn small" id="webAdmin" type="button">Korisnici</button>' : ''}<button class="btn small" id="webOut" type="button">Odjava</button>`;
+  $('#chatToggle').before(who);
+  $('#webOut').onclick = async () => { try { await saveNow(); } catch {} await fetch('/api/logout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); location.href = '/login'; };
+  const wa = $('#webAdmin'); if (wa) wa.onclick = () => { location.href = '/admin'; };
+  const ms = $('#modeSel'); if (ms) ms.innerHTML = allowedModes().map((k) => `<option value="${k}">${esc(MODES[k].n)}</option>`).join('');
+  if (P && !allowedModes().includes(P.mode)) { P.mode = lastMode(); renderAll(); }
+  setupDictation();
+}
 async function initCaps() {
-  if (!window.claude?.use) return;
+  if (!window.claude?.use) return webCaps();
   const [db, user, sample, dict, dl, assets] = await Promise.all(['db', 'user', 'sample', 'dictation', 'downloads', 'assets'].map((n) => window.claude.use(n).catch(() => null)));
   Object.assign(cap, { db, user, sample, dict, dl, assets });
   if (user) { try { cap.uid = await user.id(); } catch {} }

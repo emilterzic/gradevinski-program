@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: prototip v0.20 (studeni 2026.)
+## Stanje: v0.21 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -59,6 +59,10 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   izdvajanje etaže, presjek (uzdužni, poprečni, vodoravni) s klizačem, prozirni prikaz, svojstva kliknutog elementa
   (prozor, vrata, zid, balkon: mjere, etaža, pročelje, izvedba) uz stavke troškovnika. AI sažetak ima red „kontrola”
   (pročelja n/4, otvori pročitani i bez zida, balkoni viđeni na pročeljima a nisu u modelu).
+- **Web inačica s prijavom** (v0.21): program se na Cloudflareu poslužuje kroz Worker (`server/worker.js`) koji prije
+  svega traži prijavu korisničkim imenom i lozinkom. Korisnici, sesije, projekti i nacrti su u bazi D1, odvojeni po
+  korisniku. Administrator na `/admin` dodaje korisnike, bira vrste programa, produljuje valjanost (+1 mjesec) i
+  isključuje pristup. Lozinke se ne spremaju (samo sažetak sa solju). Postavljanje: vidi „Cloudflare” niže.
 - **Naziv i vrste programa** (v0.20): program se zove BIS građevinski program (Bridgeline Intelligence Systems).
   Vrste programa su zapisi u `MODES` u `web/app.js`: Cijela gradnja, Krovopokrivači, Zemljani radovi (iskopi, odvoz,
   nasipi, podbetoniranje temelja; izračun broja tura kamiona), Građevinska stolarija (pozicije prozora i vrata iz
@@ -111,3 +115,12 @@ jednostavne zidane zgrade; vrijednosti u `PA_MIN` treba provjeriti prema važeć
 ## Plan
 
 Faza 0 temelj → 1 MVP Hrvatska → 2 AI izmjera nacrta → 3 druga država → 4 gradilište/mobitel.
+
+## Cloudflare (web inačica)
+
+- `wrangler.jsonc`: Worker `bis-gradevinski-program`, statičke datoteke iz `web/` (`run_worker_first`), baza D1 `DB`.
+- Baza: `server/schema.sql` (naredbe su ponovljive). Nacrti idu u R2 ako se doda binding `FILES`, inače u D1 u dijelovima.
+- Objava: Cloudflare → Workers & Pages → Create application → GitHub → ovaj repozitorij → Deploy (naredba `npx wrangler deploy`).
+  Svaki `git push` na `main` nakon toga sam objavljuje novu inačicu.
+- Prvi ulazak: `/setup` otvara račun administratora (radi samo dok nema nijednog korisnika).
+- Lokalno bez Cloudflarea: `node tests/dev-server.mjs` (baza u memoriji), provjere: `node tests/server.test.mjs`.

@@ -243,6 +243,7 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 .bimrow span { font-size: 12px; color: var(--muted); line-height: 1.35; }
 .bimrow[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .bimbox input[type=range] { width: 100%; margin: 8px 0 4px; }
+.webuser { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; } .webuser span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .modesel { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .modesel select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13.5px; font-weight: 600; }
 body.mode-krov details.ogrp:not([data-g="objekt"]):not([data-g="krovOblik"]):not([data-g="pokrov"]), body.mode-zemlja details.ogrp:not([data-g="objekt"]):not([data-g="tlo"]):not([data-g="temelji"]), body.mode-stolarija details.ogrp:not([data-g="objekt"]):not([data-g="stolarija"]):not([data-g="staklo"]):not([data-g="klizna"]), body.mode-trade .stat, body.mode-trade .bsum { display: none; }
@@ -381,7 +382,7 @@ td.pc .dot-ai, td.pc .dot-kat { position: absolute; left: 3px; top: 16px; margin
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><h1>BIS građevinski program</h1><small>prototip v0.20</small></div>
+  <div class="brand"><h1>BIS građevinski program</h1><small>v0.21</small></div>
   <button class="proj-btn" id="projBtn" aria-haspopup="true"><span id="projName">Projekt</span> ▾</button>
   <div class="seg" role="group" aria-label="Uloga">
     <button id="roleP" aria-pressed="true">Projektant</button>
