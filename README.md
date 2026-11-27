@@ -122,5 +122,7 @@ Faza 0 temelj → 1 MVP Hrvatska → 2 AI izmjera nacrta → 3 druga država →
 - Baza: `server/schema.sql` (naredbe su ponovljive). Nacrti idu u R2 ako se doda binding `FILES`, inače u D1 u dijelovima.
 - Objava: Cloudflare → Workers & Pages → Create application → GitHub → ovaj repozitorij → Deploy (naredba `npx wrangler deploy`).
   Svaki `git push` na `main` nakon toga sam objavljuje novu inačicu.
+- AI: na Workeru dodati tajnu `ANTHROPIC_API_KEY` (Settings → Variables and Secrets). Model i mjesečni limit po korisniku su u
+  `wrangler.jsonc` (`AI_MODEL`, `AI_MONTHLY_CAP_USD`); limit pojedinog korisnika mijenja se na `/admin`.
 - Prvi ulazak: `/setup` otvara račun administratora (radi samo dok nema nijednog korisnika).
 - Lokalno bez Cloudflarea: `node tests/dev-server.mjs` (baza u memoriji), provjere: `node tests/server.test.mjs`.

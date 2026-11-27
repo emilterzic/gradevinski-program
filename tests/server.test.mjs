@@ -85,4 +85,23 @@ for (const tb of ['docs', 'files', 'sessions']) assert.equal((await env.DB.prepa
 assert.equal((await (await call('/api/admin/users', { cookie: A })).json()).users.length, 2, 'ostali korisnici su netaknuti');
 assert.equal((await del(id)).status, 404); assert.ok(anaId);
 assert.equal((await mk('krov@firma.hr')).status, 200, 'isto korisničko ime se može ponovno otvoriti');
+// 9. AI: bez ključa isključen; s ključem prosljeđuje, bilježi potrošnju i poštuje limit
+const aiBody = (model = 'claude-sonnet-5-5') => JSON.stringify({ model, max_tokens: 100, messages: [{ role: 'user', content: 'bok' }] });
+const aiCall = (c, b = aiBody()) => call('/api/ai', { method: 'POST', cookie: c, body: b, raw: true });
+const N = (await login('krov@firma.hr', 'lozinka123')).cookie;
+assert.equal((await (await call('/api/me', { cookie: N })).json()).ai, false); assert.equal((await aiCall(N)).status, 503);
+env.ANTHROPIC_API_KEY = 'tajna-za-test'; const realFetch = globalThis.fetch; let seenReq = null, upStatus = 200;
+globalThis.fetch = async (u, o) => { seenReq = { u, key: o.headers['x-api-key'], ver: o.headers['anthropic-version'], len: o.body.byteLength }; return new Response(JSON.stringify(upStatus === 200 ? { content: [{ type: 'text', text: 'Bok!' }], stop_reason: 'end_turn', usage: { input_tokens: 1000000, output_tokens: 100000 } } : { error: { message: 'Your credit balance is too low' } }), { status: upStatus }); };
+t = await (await call('/api/me', { cookie: N })).json(); assert.equal(t.ai, true); assert.equal(t.aiModel, 'claude-sonnet-5-5');
+t = await aiCall(N); assert.equal(t.status, 200); assert.deepEqual(await t.json(), { content: [{ type: 'text', text: 'Bok!' }], stop_reason: 'end_turn' });
+assert.equal(seenReq.u, 'https://api.anthropic.com/v1/messages'); assert.equal(seenReq.key, 'tajna-za-test'); assert.equal(seenReq.ver, '2023-06-01'); assert.equal(seenReq.len, aiBody().length);
+assert.equal((await aiCall(N, aiBody('claude-opus-5-5'))).status, 400, 'drugi model nije dopušten');
+let au = (await (await call('/api/admin/users', { cookie: A })).json()).users.find((x) => x.username === 'krov@firma.hr');
+assert.equal(au.aiCost, 3); assert.equal(au.aiCalls, 1); assert.equal(au.aiLimit, 15, '1 M ulaznih i 0,1 M izlaznih tokena = 3 $');
+assert.equal((await call('/api/admin/users/' + au.id, { method: 'POST', cookie: A, body: { aiCap: 2 } })).status, 200);
+t = await aiCall(N); assert.equal(t.status, 402, 'nakon limita AI staje'); assert.match((await t.json()).error, /limit/);
+await call('/api/admin/users/' + au.id, { method: 'POST', cookie: A, body: { aiCap: 50 } }); upStatus = 400;
+t = await aiCall(N); assert.equal(t.status, 502); assert.match((await t.json()).error, /nema_kredita/); assert.doesNotMatch(JSON.stringify(await (await aiCall(N)).json()), /credit|anthropic/i, 'korisnik ne vidi tehničke detalje');
+assert.equal((await aiCall(null)).status, 401, 'AI samo za prijavljene');
+globalThis.fetch = realFetch;
 console.log('poslužitelj: sve provjere prolaze');

@@ -10,7 +10,7 @@ table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dde3
 th{font-size:12px;color:#5d6b7c;background:#f8fafc}td small{color:#5d6b7c;display:block}.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
 .on{background:#e3f5e8;color:#1a7f37}.off{background:#fde8e6;color:#b3261e}.exp{background:#fff1d6;color:#8a5a00}.acts{display:flex;gap:6px;flex-wrap:wrap}.acts button{padding:5px 9px;font-size:12.5px}.acts button.d{color:#b3261e;border-color:#f0c4c0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:0 12px;background:#fff;border:1px solid #dde3ea;border-radius:12px;padding:6px 16px 16px}
-.chk{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px}.chk label{display:flex;align-items:center;gap:5px;margin:0;color:inherit;font-size:13px}.chk input{width:auto}`;
+.chk{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px}.chk label{display:flex;align-items:center;gap:5px;margin:0;color:inherit;font-size:13px}.chk input{width:auto}td small input{width:54px;padding:2px 5px;display:inline;font-size:12px}`;
 // Lozinka se u pregledniku „rasteže” (PBKDF2, 310 000 koraka) i poslužitelju se šalje samo dobiveni ključ.
 const JS = `const $=(s)=>document.querySelector(s);
 async function stretch(u,p){const e=new TextEncoder(),k=await crypto.subtle.importKey('raw',e.encode(p),'PBKDF2',false,['deriveBits']);
@@ -44,8 +44,8 @@ catch(x){msg(x.message);b.disabled=false}};`);
 export const ADMIN_HTML = page('BIS program – korisnici', `<div class="wide">
 <div class="top"><h1>Korisnici</h1><button onclick="location.href='/'">Otvori program</button><button id="out">Odjava</button></div>
 <p class="sub">Korisnik može ući dok je uključen i dok mu vrijedi datum. Nakon uplate produlji ga za mjesec; ako više ne koristi program, isključi ga (podaci mu ostaju) ili ga izbriši (trajno, zajedno s projektima).</p>
-<div class="msg" id="msg" role="alert"></div>
-<table><thead><tr><th>Korisnik</th><th>Tvrtka</th><th>Vrste programa</th><th>Vrijedi do</th><th>Stanje</th><th>Radnje</th></tr></thead><tbody id="rows"></tbody></table>
+<div class="msg" id="msg" role="alert"></div><p class="sub" id="ai"></p>
+<table><thead><tr><th>Korisnik</th><th>Tvrtka</th><th>Vrste programa</th><th>Vrijedi do</th><th>Stanje</th><th>AI ovaj mjesec</th><th>Radnje</th></tr></thead><tbody id="rows"></tbody></table>
 <h2>Novi korisnik</h2><form class="grid" id="nf" autocomplete="off">
 <div><label for="nu">Korisničko ime ili e-adresa</label><input id="nu" autocapitalize="none" spellcheck="false" required></div>
 <div><label for="nn">Ime i prezime</label><input id="nn"></div><div><label for="nc">Tvrtka</label><input id="nc"></div>
@@ -57,10 +57,11 @@ export const ADMIN_HTML = page('BIS program – korisnici', `<div class="wide">
 const esc=(s)=>String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const dat=(d)=>d?d.split('-').reverse().join('. ')+'.':'bez roka';
 $('#nmodes').innerHTML=Object.keys(M).map((k)=>'<label><input type="checkbox" value="'+k+'"'+(k==='gradnja'?' checked':'')+'>'+M[k]+'</label>').join('');
-async function load(){const r=await api('/api/admin/users');T=r.today;$('#rows').innerHTML=r.users.map((u)=>{const adm=u.role==='admin',exp=!adm&&u.validUntil&&u.validUntil<T,st=!u.active?['off','Isključen']:exp?['exp','Istekao']:['on','Aktivan'];
+async function load(){const r=await api('/api/admin/users');T=r.today;$('#ai').textContent=r.ai?'AI je uključen. Uz svakog korisnika vidiš potrošnju ovaj mjesec (u dolarima) i limit nakon kojeg mu se AI zaustavlja do sljedećeg mjeseca.':'AI još nije uključen: na Workeru nedostaje tajna ANTHROPIC_API_KEY.';$('#rows').innerHTML=r.users.map((u)=>{const adm=u.role==='admin',exp=!adm&&u.validUntil&&u.validUntil<T,st=!u.active?['off','Isključen']:exp?['exp','Istekao']:['on','Aktivan'];
 return '<tr data-id="'+u.id+'" data-u="'+esc(u.username)+'"><td><b>'+esc(u.username)+'</b><small>'+esc(u.name)+(adm?' · administrator':'')+'</small></td><td>'+esc(u.company)+'</td>'
 +'<td>'+(adm?'sve':'<div class="chk">'+Object.keys(M).map((k)=>'<label><input type="checkbox" data-mode="'+k+'"'+(u.modes.includes(k)?' checked':'')+'>'+M[k]+'</label>').join('')+'</div>')+'</td>'
 +'<td>'+(adm?'bez roka':dat(u.validUntil))+'</td><td><span class="pill '+st[0]+'">'+st[1]+'</span></td>'
++'<td>'+u.aiCost.toFixed(2)+' $ <small>'+u.aiCalls+' upita · limit <input data-cap value="'+u.aiLimit+'" inputmode="decimal" aria-label="AI limit u dolarima"> $</small></td>'
 +'<td><div class="acts">'+(adm?'':'<button data-a="m1">+1 mjesec</button><button data-a="m12">+1 godina</button><button data-a="tg">'+(u.active?'Isključi':'Uključi')+'</button>')+'<button data-a="pw">Nova lozinka</button>'+(adm?'':'<button data-a="del" class="d">Izbriši</button>')+'</div></td></tr>'}).join('')}
 async function act(id,body,ok){try{await api('/api/admin/users/'+id,body);msg(ok,true);await load()}catch(x){msg(x.message)}}
 $('#rows').onclick=async(e)=>{const b=e.target.closest('button[data-a]');if(!b)return;const tr=b.closest('tr'),id=tr.dataset.id,u=tr.dataset.u,a=b.dataset.a;
@@ -68,7 +69,8 @@ if(a==='m1')act(id,{addMonths:1,active:true},u+': produljeno za mjesec dana.');e
 else if(a==='tg'){const on=b.textContent==='Uključi';act(id,{active:on},u+(on?': uključen.':': isključen i odjavljen.'))}
 else if(a==='del'){const t=prompt('TRAJNO BRISANJE: korisnik '+u+' i svi njegovi projekti i nacrti bit će izbrisani i ne mogu se vratiti.\\n\\nZa potvrdu upiši njegovo korisničko ime:');if(t===null)return;if(t.trim().toLowerCase()!==u)return msg('Korisničko ime se ne podudara. Ništa nije izbrisano.');try{await api('/api/admin/users/'+id,null,'DELETE');msg(u+': trajno izbrisan.',true);await load()}catch(x){msg(x.message)}}
 else if(a==='pw'){const p=prompt('Nova lozinka za '+u+' (najmanje 8 znakova):');if(p===null)return;if(p.length<8)return msg('Lozinka mora imati najmanje 8 znakova.');act(id,{key:await stretch(u,p)},u+': lozinka je promijenjena.')}};
-$('#rows').onchange=(e)=>{const c=e.target.closest('[data-mode]');if(!c)return;const tr=c.closest('tr');act(tr.dataset.id,{modes:[...tr.querySelectorAll('[data-mode]:checked')].map((x)=>x.dataset.mode)},tr.dataset.u+': vrste programa su spremljene.')};
+$('#rows').onchange=(e)=>{const k=e.target.closest('[data-cap]');if(k){const tr=k.closest('tr'),v=parseFloat(k.value.replace(',','.'));if(!(v>=0))return msg('Limit mora biti broj.');return act(tr.dataset.id,{aiCap:v},tr.dataset.u+': mjesečni AI limit je '+v+' $.')}
+const c=e.target.closest('[data-mode]');if(!c)return;const tr=c.closest('tr');act(tr.dataset.id,{modes:[...tr.querySelectorAll('[data-mode]:checked')].map((x)=>x.dataset.mode)},tr.dataset.u+': vrste programa su spremljene.')};
 $('#nf').onsubmit=async(e)=>{e.preventDefault();const b=$('#nb');b.disabled=true;try{const u=$('#nu').value;
 await api('/api/admin/users',{username:u,name:$('#nn').value,company:$('#nc').value,key:await stretch(u,$('#np').value),months:+$('#nm').value,modes:[...document.querySelectorAll('#nmodes input:checked')].map((x)=>x.value)});
 msg('Korisnik '+u+' je dodan. Javi mu korisničko ime i lozinku.',true);$('#nf').reset();document.querySelector('#nmodes input').checked=true;await load()}catch(x){msg(x.message)}b.disabled=false};

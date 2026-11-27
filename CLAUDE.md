@@ -99,6 +99,12 @@
   i `valid_until` nije prošao (administrator nema rok). Lozinka: preglednik je rasteže (PBKDF2, 310 000 koraka, sol
   `bis-gp:<korisničko ime>`), poslužitelj sprema SHA-256(sol + ključ); zato se korisničko ime ne može mijenjati.
   U `web/app.js` `webCaps()` zamjenjuje `cap.db/assets/dl/dict` pozivima `/api/...`; `WEB` je prijavljeni korisnik,
-  `allowedModes()` čita njegove vrste programa. AI (`cap.sample`) na webu još nije spojen.
+  `allowedModes()` čita njegove vrste programa.
   Prije objave: `node tests/server.test.mjs` (uz `node tests/model.test.mjs`). Repozitorij je javan: u njega ne idu
   nacrti, lozinke ni ključevi.
+- AI na webu (v0.22): `/api/ai` u `server/worker.js` prosljeđuje tijelo zahtjeva AI servisu bez raspakiravanja (ključ je tajna
+  `ANTHROPIC_API_KEY` na Workeru, nikad u kodu ni u pregledniku); provjerava samo da tijelo počinje s `{"model":"<AI_MODEL>",`.
+  Potrošnja po korisniku i mjesecu u tablici `ai_month`; limit `AI_MONTHLY_CAP_USD` ili `users.ai_cap` (mijenja se na `/admin`).
+  U pregledniku `cap.sample` iz `webCaps()` ima isto sučelje kao u Claudeu i sam vrti petlju alata (`tools[].execute`).
+  Cijene modela su u `AI_PRICES` (provjeriti kad se promijene). Lokalna provjera: `BIS_MOCK_AI=1 node tests/dev-server.mjs`.
+  Brisanje korisnika (`DELETE /api/admin/users/:id`) uklanja i njegove sesije, projekte, nacrte i potrošnju.

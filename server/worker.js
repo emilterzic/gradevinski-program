@@ -5,6 +5,15 @@ import { LOGIN_HTML, ADMIN_HTML, SETUP_HTML } from './pages.js';
 
 const SESSION_DAYS = 30, COOKIE = 'bis_s', DOC_CHUNK = 600000, FILE_CHUNK = 1000000, MAX_DOC = 24e6, MAX_FILE_DB = 40e6, MAX_FILE_R2 = 200e6;
 const MODES = ['gradnja', 'krov', 'zemlja', 'stolarija'];
+// AI (v0.22): ključ je tajna ANTHROPIC_API_KEY na Workeru; preglednik ga nikad ne vidi. Model i mjesečni limit po korisniku
+// zadaju se varijablama AI_MODEL i AI_MONTHLY_CAP_USD. Cijene u USD po milijun tokena: iste kao u bridgeline-agent-proxy
+// (studeni 2026.); provjeriti kad se cijene promijene.
+const AI_URL = 'https://api.anthropic.com/v1/messages', AI_VERSION = '2023-06-01', AI_MAX_BODY = 16e6;
+const AI_PRICES = { 'claude-sonnet-5-5': { in: 2.0, out: 10.0, cacheRead: 0.10, cacheWrite: 2.5 }, 'claude-haiku-5-5': { in: 0.10, out: 0.50, cacheRead: 0.01, cacheWrite: 0.125 } };
+const aiModel = (env) => (AI_PRICES[env.AI_MODEL] ? env.AI_MODEL : 'claude-sonnet-5-5');
+const aiCap = (env, u) => (u.ai_cap !== null && u.ai_cap !== undefined ? +u.ai_cap : Math.max(0, +(env.AI_MONTHLY_CAP_USD || 15)));
+const month = () => today().slice(0, 7);
+function aiCost(model, u) { const p = AI_PRICES[model]; if (!p) return 0; return Math.round(((u.input_tokens || 0) * p.in + (u.output_tokens || 0) * p.out + (u.cache_read_input_tokens || 0) * p.cacheRead + (u.cache_creation_input_tokens || 0) * p.cacheWrite)) / 1e6; }
 const enc = new TextEncoder();
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 const sha = async (s) => hex(await crypto.subtle.digest('SHA-256', enc.encode(s)));
@@ -19,7 +28,7 @@ const okKey = (k) => typeof k === 'string' && /^[0-9a-f]{64}$/.test(k); // raste
 const passHash = (salt, key) => sha(salt + ':' + key);
 const addMonths = (from, n) => { const base = from && from > today() ? from : today(), d = new Date(base + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 10); };
 const valid = (u) => !!u && u.active === 1 && (u.role === 'admin' || !u.valid_until || u.valid_until >= today());
-const pub = (u) => ({ id: u.id, username: u.username, name: u.name || '', company: u.company || '', role: u.role, active: u.active === 1, validUntil: u.valid_until || null, modes: u.role === 'admin' ? MODES : JSON.parse(u.modes || '[]'), lastLogin: u.last_login || null, createdAt: u.created_at });
+const pub = (u) => ({ id: u.id, username: u.username, name: u.name || '', company: u.company || '', role: u.role, active: u.active === 1, validUntil: u.valid_until || null, modes: u.role === 'admin' ? MODES : JSON.parse(u.modes || '[]'), lastLogin: u.last_login || null, createdAt: u.created_at, aiCap: u.ai_cap === undefined ? null : u.ai_cap });
 
 // kratko pamćenje provjerenih sesija u memoriji (manje upita u bazu; isključenje korisnika vrijedi najkasnije za 60 s)
 const seen = new Map();
@@ -74,7 +83,8 @@ async function newUser(env, b, role) {
 async function admin(request, env, path, me) {
   if (path === '/api/admin/users' && request.method === 'GET') {
     const r = await env.DB.prepare('SELECT * FROM users ORDER BY role, company, username').all();
-    return json({ users: r.results.map(pub), today: today() });
+    const a = await env.DB.prepare('SELECT user_id, cost_usd, calls FROM ai_month WHERE month = ?').bind(month()).all(), by = Object.fromEntries(a.results.map((x) => [x.user_id, x]));
+    return json({ users: r.results.map((u) => ({ ...pub(u), aiCost: by[u.id] ? by[u.id].cost_usd : 0, aiCalls: by[u.id] ? by[u.id].calls : 0, aiLimit: aiCap(env, u) })), today: today(), ai: !!env.ANTHROPIC_API_KEY, aiModel: aiModel(env) });
   }
   if (path === '/api/admin/users' && request.method === 'POST') return newUser(env, await body(request), 'user');
   const m = path.match(/^\/api\/admin\/users\/(u_[0-9a-f]{16})$/);
@@ -87,6 +97,7 @@ async function admin(request, env, path, me) {
     if (Array.isArray(b.modes)) { const ms = b.modes.filter((x) => MODES.includes(x)); set.push('modes = ?'); val.push(JSON.stringify(ms.length ? ms : ['gradnja'])); }
     if (b.name !== undefined) { set.push('name = ?'); val.push(String(b.name).slice(0, 120)); }
     if (b.company !== undefined) { set.push('company = ?'); val.push(String(b.company).slice(0, 120)); }
+    if (b.aiCap !== undefined) { const c = b.aiCap === null || b.aiCap === '' ? null : Math.max(0, Math.min(1000, +b.aiCap)); if (c !== null && !Number.isFinite(c)) return err('Limit nije ispravan.'); set.push('ai_cap = ?'); val.push(c); }
     if (b.key !== undefined) { if (!okKey(b.key)) return err('Lozinka nije ispravno poslana.'); const salt = rnd(16); set.push('pass_hash = ?', 'salt = ?'); val.push(await passHash(salt, b.key), salt); }
     if (!set.length) return err('Nema izmjene.');
     const st = [env.DB.prepare(`UPDATE users SET ${set.join(', ')} WHERE id = ?`).bind(...val, u.id)];
@@ -100,11 +111,35 @@ async function admin(request, env, path, me) {
     if (u.id === me.id) return err('Ne možeš izbrisati vlastiti račun.');
     if (u.role === 'admin') return err('Račun administratora se ne briše ovdje.');
     if (env.FILES) { let cur; do { const l = await env.FILES.list({ prefix: u.id + '/', cursor: cur }); if (l.objects.length) await env.FILES.delete(l.objects.map((o) => o.key)); cur = l.truncated ? l.cursor : null; } while (cur); }
-    await env.DB.batch(['sessions', 'docs', 'files'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(u.id)).concat([env.DB.prepare('DELETE FROM users WHERE id = ?').bind(u.id), env.DB.prepare('DELETE FROM login_fail WHERE k = ?').bind('u:' + u.username)]));
+    await env.DB.batch(['sessions', 'docs', 'files', 'ai_month'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(u.id)).concat([env.DB.prepare('DELETE FROM users WHERE id = ?').bind(u.id), env.DB.prepare('DELETE FROM login_fail WHERE k = ?').bind('u:' + u.username)]));
     seen.clear();
     return json({ ok: true });
   }
   return err('Nepoznato.', 404);
+}
+
+// AI: zahtjev iz preglednika prosljeđuje se AI servisu bez raspakiravanja (tijelo sa slikama nacrta može imati više MB,
+// a besplatni plan dopušta malo procesorskog vremena). Provjerava se samo početak tijela: model mora biti dopušteni.
+async function ai(request, env, me) {
+  if (!env.ANTHROPIC_API_KEY) return err('AI na ovoj adresi još nije uključen.', 503);
+  const model = aiModel(env), mo = month();
+  const spent = await env.DB.prepare('SELECT cost_usd FROM ai_month WHERE user_id = ? AND month = ?').bind(me.id, mo).first();
+  if (spent && spent.cost_usd >= aiCap(env, me)) return err('Dosegnut je mjesečni limit AI-ja za ovaj račun. Javite se Bridgeline Intelligence Systems.', 402);
+  const buf = await request.arrayBuffer(); if (!buf.byteLength || buf.byteLength > AI_MAX_BODY) return err('Zahtjev je prazan ili prevelik.', 413);
+  const head = new TextDecoder().decode(new Uint8Array(buf, 0, Math.min(90, buf.byteLength)));
+  if (!head.startsWith('{"model":"' + model + '",')) return err('Model nije dopušten.', 400);
+  const up = await fetch(AI_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': AI_VERSION }, body: buf });
+  const text = await up.text(); let data = null; try { data = JSON.parse(text); } catch {}
+  const usage = (data && data.usage) || {}, cost = up.ok ? aiCost(model, usage) : 0;
+  await env.DB.prepare('INSERT INTO ai_month (user_id, month, cost_usd, calls) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, month) DO UPDATE SET cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1').bind(me.id, mo, cost).run();
+  if (!up.ok || !data) {
+    // korisnik ne vidi tehničke detalje; razlog koji rješava vlasnik ide u dnevnik Workera i kao kratki kod
+    const t = text.toLowerCase(), kod = t.includes('credit balance') ? 'nema_kredita' : up.status === 401 || t.includes('x-api-key') ? 'api_kljuc' : t.includes('limit') && up.status !== 429 && up.status !== 529 ? 'limit_racuna' : '';
+    console.error('AI', up.status, text.slice(0, 300));
+    if (up.status === 429 || up.status === 529) return err('AI je trenutno zauzet. Pokušaj ponovno za minutu.', 429);
+    return err(kod ? 'AI je privremeno nedostupan. Javite se Bridgeline Intelligence Systems (kod ' + kod + ').' : 'AI trenutno nije dostupan. Pokušaj ponovno za minutu.', 502);
+  }
+  return json({ content: data.content, stop_reason: data.stop_reason });
 }
 
 // dokumenti korisnika (projekti, cjenik, dnevnici): JSON u dijelovima, jer red u bazi smije imati najviše 2 MB
@@ -186,7 +221,8 @@ export default {
         if (path.startsWith('/api/')) return err('Prijava je istekla. Prijavi se ponovno.', 401);
         return (request.headers.get('accept') || '').includes('text/html') ? Response.redirect(url.origin + '/login', 302) : new Response('Potrebna je prijava.', { status: 401 });
       }
-      if (path === '/api/me') return json(pub(me));
+      if (path === '/api/me') return json({ ...pub(me), ai: !!env.ANTHROPIC_API_KEY, aiModel: aiModel(env) });
+      if (path === '/api/ai' && method === 'POST') return await ai(request, env, me);
       if (path === '/api/password' && method === 'POST') {
         const b = await body(request); if (!okKey(b.oldKey) || !okKey(b.newKey)) return err('Lozinka nije ispravno poslana.');
         if (!safeEq(await passHash(me.salt, b.oldKey), me.pass_hash)) return err('Sadašnja lozinka nije točna.', 403);

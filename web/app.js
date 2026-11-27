@@ -1,4 +1,4 @@
-// BIS program – prototip v0.21
+// BIS program – v0.22
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -1721,7 +1721,7 @@ async function aiBuildModel() {
     showView('3d');
   } catch (e) {
     console.warn(e); aiReadLog({ ok: false, err: String(e?.message || e), code: e?.code || null });
-    addMsg('sys', e?.code === 'not_granted' ? 'AI nije dopušten u ovom prikazu. 3D model zadaj vrstom objekta i dimenzijama.' : e?.code === 'rate_limited' ? 'AI je trenutno zauzet (ograničenje broja upita). Pokušaj ponovno za minutu.' : `Nisam uspio složiti model (${e?.message || e}). Pokreni ponovno: koraci koji su uspjeli neće se ponavljati. Dimenzije možeš zadati i ručno.`);
+    addMsg('sys', e?.code === 'not_granted' ? (WEB && e.message ? e.message + ' ' : 'AI nije dopušten u ovom prikazu. ') + '3D model zadaj vrstom objekta i dimenzijama.' : e?.code === 'rate_limited' ? 'AI je trenutno zauzet (ograničenje broja upita). Pokušaj ponovno za minutu.' : `Nisam uspio složiti model (${e?.message || e}). Pokreni ponovno: koraci koji su uspjeli neće se ponavljati. Dimenzije možeš zadati i ručno.`);
   } finally { aiModelBusy = false; }
 }
 function renderStages3d() {
@@ -2027,7 +2027,7 @@ async function sendChat(text, opts = {}) {
     const r = await cap.sample(msgs, o);
     reply.content = (r.text || '').trim() || 'Gotovo.';
   } catch (e) {
-    if (e?.code === 'not_granted') { reply.content = 'AI asistent nije dopušten u ovom prikazu. Sve možeš napraviti ručno.'; cap.sample = null; }
+    if (e?.code === 'not_granted') { reply.content = WEB && e.message ? e.message : 'AI asistent nije dopušten u ovom prikazu. Sve možeš napraviti ručno.'; if (!WEB) cap.sample = null; }
     else if (e?.code === 'rate_limited') reply.content = 'Previše zahtjeva u kratkom vremenu. Pokušaj za minutu.';
     else reply.content = (e?.text ? e.text + '\n\n' : '') + 'Došlo je do greške: ' + (e?.message || e);
   }
@@ -2191,7 +2191,33 @@ async function webCaps() {
         try { rec.start(); } catch (x) { rej(x); } }),
       stop: async () => { try { rec && rec.stop(); } catch {} } };
   }
-  $('#aiState').textContent = 'uskoro';
+  // AI: zahtjev ide na /api/ai (ključ je samo na poslužitelju). Isto sučelje kao cap.sample u Claudeu:
+  // tekst ili poruke, slike (Blob), alati koje program izvršava sam, pa se rezultat vraća modelu dok ne završi.
+  if (me.ai) {
+    const b64 = (blob) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
+    cap.sample = async (input, o = {}) => {
+      const messages = (typeof input === 'string' ? [{ role: 'user', content: input }] : input).map((m) => ({ role: m.role, content: m.content }));
+      if (o.images && o.images.length) { const last = messages[messages.length - 1], imgs = []; for (const b of o.images) imgs.push({ type: 'image', source: { type: 'base64', media_type: b.type || 'image/jpeg', data: await b64(b) } }); last.content = [...imgs, { type: 'text', text: last.content }]; }
+      const tools = (o.tools || []).map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema || { type: 'object', properties: {} } }));
+      let text = '';
+      for (let step = 0; step < 14; step++) {
+        // „model” mora biti prvi ključ: poslužitelj provjerava samo početak tijela
+        const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, signal: o.signal, body: JSON.stringify({ model: me.aiModel, max_tokens: 8000, messages, ...(tools.length ? { tools } : {}) }) });
+        if (r.status === 401) { location.href = '/login'; throw new Error('Prijava je istekla.'); }
+        if (!r.ok) { let e = {}; try { e = await r.json(); } catch {} throw Object.assign(new Error(e.error || 'AI trenutno nije dostupan.'), { code: r.status === 429 ? 'rate_limited' : r.status === 402 || r.status === 503 ? 'not_granted' : 'error', text }); }
+        const res = await r.json(), parts = res.content || [], t = parts.filter((c) => c.type === 'text').map((c) => c.text).join('');
+        if (t) { text += (text ? '\n' : '') + t; if (o.onText) o.onText({ text }); }
+        const uses = parts.filter((c) => c.type === 'tool_use');
+        if (res.stop_reason !== 'tool_use' || !uses.length) break;
+        messages.push({ role: 'assistant', content: parts });
+        const out = [];
+        for (const u of uses) { const tool = (o.tools || []).find((x) => x.name === u.name); let v, bad = false; try { if (!tool) throw new Error('Nepoznat alat'); v = await tool.execute(u.input || {}); } catch (e) { v = String(e && e.message ? e.message : e); bad = true; } out.push({ type: 'tool_result', tool_use_id: u.id, content: typeof v === 'string' ? v : JSON.stringify(v === undefined ? 'ok' : v), ...(bad ? { is_error: true } : {}) }); }
+        messages.push({ role: 'user', content: out });
+      }
+      return { text };
+    };
+    cap.imagesOk = true; cap.maxImages = 4; $('#aiState').textContent = '';
+  } else $('#aiState').textContent = 'uskoro';
   // korisnik i odjava u zaglavlju
   const who = document.createElement('div'); who.className = 'webuser';
   who.innerHTML = `<span title="${esc(me.username)}">${esc(me.name || me.username)}</span>${me.role === 'admin' ? '<button class="btn small" id="webAdmin" type="button">Korisnici</button>' : ''}<button class="btn small" id="webOut" type="button">Odjava</button>`;
