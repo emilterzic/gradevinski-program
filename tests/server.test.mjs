@@ -27,7 +27,7 @@ assert.equal((await call('/api/setup', { method: 'POST', body: { username: 'drug
 assert.equal((await login('emil', 'kriva')).status, 401);
 const A = (await login('EMIL', 'tajna-lozinka')).cookie; assert.ok(A && A.startsWith('bis_s='));
 t = await (await call('/api/me', { cookie: A })).json(); assert.equal(t.role, 'admin'); assert.equal(t.modes.length, 4);
-t = await call('/', { cookie: A, accept: 'text/html' }); assert.equal(t.status, 200); assert.match(await t.r.text(), /BIS građevinski program/);
+t = await call('/', { cookie: A, accept: 'text/html' }); assert.equal(t.status, 200); assert.match(await t.r.text(), /BIS program/);
 assert.equal((await call('/admin', { cookie: A, accept: 'text/html' })).status, 200);
 // 3. novi korisnik s jednom vrstom programa
 const mk = (u, extra = {}) => call('/api/admin/users', { method: 'POST', cookie: A, body: { username: u, name: 'Krov d.o.o.', company: 'Krov', key: key(u, 'lozinka123'), months: 1, modes: ['krov'], ...extra } });
@@ -72,4 +72,17 @@ for (let i = 0; i < 10; i++) await login('ana', 'krivo' + i, '9.9.9.9');
 assert.equal((await login('ana', 'lozinka123', '9.9.9.9')).status, 429, 'nakon 10 krivih pokušaja prijava se zaustavlja');
 const row = env.DB.prepare('SELECT pass_hash, salt FROM users WHERE username = ?').bind('ana'); t = await row.first();
 assert.ok(t.pass_hash !== key('ana', 'lozinka123') && t.pass_hash.length === 64 && t.salt.length === 32, 'u bazi je samo sažetak sa solju');
+// 8. trajno brisanje korisnika
+const del = (x, c = A) => call('/api/admin/users/' + x, { method: 'DELETE', cookie: c });
+const all = (await (await call('/api/admin/users', { cookie: A })).json()).users, adminId = all.find((x) => x.role === 'admin').id, anaId = all.find((x) => x.username === 'ana').id;
+assert.equal((await del(adminId)).status, 400, 'administrator ne može izbrisati sebe');
+assert.equal((await del(id, U3)).status, 403, 'običan korisnik ne može brisati');
+const K = (await login('krov@firma.hr', 'nova')).cookie; assert.equal((await call('/api/me', { cookie: K })).status, 200);
+assert.equal((await del(id)).status, 200);
+assert.equal((await call('/api/me', { cookie: K })).status, 401, 'izbrisani korisnik je odmah odjavljen');
+assert.equal((await login('krov@firma.hr', 'nova')).status, 401, 'izbrisani korisnik se više ne može prijaviti');
+for (const tb of ['docs', 'files', 'sessions']) assert.equal((await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${tb} WHERE user_id = ?`).bind(id).first()).n, 0, tb + ' izbrisanog korisnika su uklonjeni');
+assert.equal((await (await call('/api/admin/users', { cookie: A })).json()).users.length, 2, 'ostali korisnici su netaknuti');
+assert.equal((await del(id)).status, 404); assert.ok(anaId);
+assert.equal((await mk('krov@firma.hr')).status, 200, 'isto korisničko ime se može ponovno otvoriti');
 console.log('poslužitelj: sve provjere prolaze');

@@ -1,4 +1,4 @@
-// BIS građevinski program – prototip v0.21
+// BIS program – prototip v0.21
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika

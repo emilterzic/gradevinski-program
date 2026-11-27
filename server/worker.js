@@ -1,4 +1,4 @@
-// BIS građevinski program – poslužiteljski dio (Cloudflare Worker + D1)
+// BIS program – poslužiteljski dio (Cloudflare Worker + D1)
 // Sve ide kroz ovaj Worker: prijava, provjera valjanosti korisnika, spremanje podataka po korisniku i tek onda program.
 // Lozinka se nikad ne sprema: preglednik je prije slanja „rasteže” (PBKDF2), a ovdje se sprema samo sažetak sa solju.
 import { LOGIN_HTML, ADMIN_HTML, SETUP_HTML } from './pages.js';
@@ -92,6 +92,16 @@ async function admin(request, env, path, me) {
     const st = [env.DB.prepare(`UPDATE users SET ${set.join(', ')} WHERE id = ?`).bind(...val, u.id)];
     if (b.active === false || b.key !== undefined) st.push(env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(u.id)); // odmah odjavi
     await env.DB.batch(st); seen.clear();
+    return json({ ok: true });
+  }
+  // trajno brisanje: korisnik, njegove sesije, projekti i nacrti (ne može se vratiti)
+  if (m && request.method === 'DELETE') {
+    const u = await env.DB.prepare('SELECT id, username, role FROM users WHERE id = ?').bind(m[1]).first(); if (!u) return err('Korisnik ne postoji.', 404);
+    if (u.id === me.id) return err('Ne možeš izbrisati vlastiti račun.');
+    if (u.role === 'admin') return err('Račun administratora se ne briše ovdje.');
+    if (env.FILES) { let cur; do { const l = await env.FILES.list({ prefix: u.id + '/', cursor: cur }); if (l.objects.length) await env.FILES.delete(l.objects.map((o) => o.key)); cur = l.truncated ? l.cursor : null; } while (cur); }
+    await env.DB.batch(['sessions', 'docs', 'files'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(u.id)).concat([env.DB.prepare('DELETE FROM users WHERE id = ?').bind(u.id), env.DB.prepare('DELETE FROM login_fail WHERE k = ?').bind('u:' + u.username)]));
+    seen.clear();
     return json({ ok: true });
   }
   return err('Nepoznato.', 404);

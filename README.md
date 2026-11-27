@@ -1,4 +1,4 @@
-# BIS građevinski program
+# BIS program
 
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
@@ -63,7 +63,7 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   svega traži prijavu korisničkim imenom i lozinkom. Korisnici, sesije, projekti i nacrti su u bazi D1, odvojeni po
   korisniku. Administrator na `/admin` dodaje korisnike, bira vrste programa, produljuje valjanost (+1 mjesec) i
   isključuje pristup. Lozinke se ne spremaju (samo sažetak sa solju). Postavljanje: vidi „Cloudflare” niže.
-- **Naziv i vrste programa** (v0.20): program se zove BIS građevinski program (Bridgeline Intelligence Systems).
+- **Naziv i vrste programa** (v0.20): program se zove BIS program (Bridgeline Intelligence Systems).
   Vrste programa su zapisi u `MODES` u `web/app.js`: Cijela gradnja, Krovopokrivači, Zemljani radovi (iskopi, odvoz,
   nasipi, podbetoniranje temelja; izračun broja tura kamiona), Građevinska stolarija (pozicije prozora i vrata iz
   otvora 3D modela, ponuda po pozicijama). Svaka struka ima svoju ponudu, brze stavke, katalog i ugovor.
@@ -118,7 +118,7 @@ Faza 0 temelj → 1 MVP Hrvatska → 2 AI izmjera nacrta → 3 druga država →
 
 ## Cloudflare (web inačica)
 
-- `wrangler.jsonc`: Worker `gradevinski-program`, statičke datoteke iz `web/` (`run_worker_first`), baza D1 `DB`.
+- `wrangler.jsonc`: Worker `bis-program`, statičke datoteke iz `web/` (`run_worker_first`), baza D1 `DB`.
 - Baza: `server/schema.sql` (naredbe su ponovljive). Nacrti idu u R2 ako se doda binding `FILES`, inače u D1 u dijelovima.
 - Objava: Cloudflare → Workers & Pages → Create application → GitHub → ovaj repozitorij → Deploy (naredba `npx wrangler deploy`).
   Svaki `git push` na `main` nakon toga sam objavljuje novu inačicu.

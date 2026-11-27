@@ -8,7 +8,7 @@ button.p{background:#1d5fd1;border-color:#1d5fd1;color:#fff;font-weight:600}butt
 .msg{margin-top:14px;font-size:13.5px;min-height:20px}.msg.e{color:#b3261e}.msg.ok{color:#1a7f37}.top{display:flex;align-items:center;gap:10px;margin-bottom:6px}.top h1{margin-right:auto}
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dde3ea;border-radius:12px;overflow:hidden}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid #e8ecf1;font-size:13.5px;vertical-align:middle}
 th{font-size:12px;color:#5d6b7c;background:#f8fafc}td small{color:#5d6b7c;display:block}.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
-.on{background:#e3f5e8;color:#1a7f37}.off{background:#fde8e6;color:#b3261e}.exp{background:#fff1d6;color:#8a5a00}.acts{display:flex;gap:6px;flex-wrap:wrap}.acts button{padding:5px 9px;font-size:12.5px}
+.on{background:#e3f5e8;color:#1a7f37}.off{background:#fde8e6;color:#b3261e}.exp{background:#fff1d6;color:#8a5a00}.acts{display:flex;gap:6px;flex-wrap:wrap}.acts button{padding:5px 9px;font-size:12.5px}.acts button.d{color:#b3261e;border-color:#f0c4c0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:0 12px;background:#fff;border:1px solid #dde3ea;border-radius:12px;padding:6px 16px 16px}
 .chk{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px}.chk label{display:flex;align-items:center;gap:5px;margin:0;color:inherit;font-size:13px}.chk input{width:auto}`;
 // Lozinka se u pregledniku „rasteže” (PBKDF2, 310 000 koraka) i poslužitelju se šalje samo dobiveni ključ.
@@ -21,8 +21,8 @@ let o={};try{o=await r.json()}catch{}if(!r.ok)throw new Error(o.error||'Greška.
 function msg(t,ok){const m=$('#msg');m.textContent=t||'';m.className='msg '+(ok?'ok':'e')}`;
 const page = (title, bodyHtml, script) => `<!doctype html><html lang="hr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title><style>${CSS}</style></head><body>${bodyHtml}<script>${JS}${script}</script></body></html>`;
 
-export const LOGIN_HTML = page('BIS građevinski program – prijava', `<form class="wrap" id="f" autocomplete="on">
-<h1>BIS građevinski program</h1><p class="sub">Bridgeline Intelligence Systems</p>
+export const LOGIN_HTML = page('BIS program – prijava', `<form class="wrap" id="f" autocomplete="on">
+<h1>BIS program</h1><p class="sub">Bridgeline Intelligence Systems</p>
 <label for="u">Korisničko ime</label><input id="u" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
 <label for="p">Lozinka</label><input id="p" name="password" type="password" autocomplete="current-password" required>
 <button class="p w" id="b" type="submit">Prijava</button><div class="msg" id="msg" role="alert"></div></form>`,
@@ -30,7 +30,7 @@ export const LOGIN_HTML = page('BIS građevinski program – prijava', `<form cl
 try{const u=$('#u').value,r=await api('/api/login',{username:u,key:await stretch(u,$('#p').value)});location.href=r.role==='admin'?'/admin':'/'}
 catch(x){msg(x.message);b.disabled=false}};`);
 
-export const SETUP_HTML = page('BIS građevinski program – postavljanje', `<form class="wrap" id="f" autocomplete="off">
+export const SETUP_HTML = page('BIS program – postavljanje', `<form class="wrap" id="f" autocomplete="off">
 <h1>Prvo postavljanje</h1><p class="sub">Otvori račun administratora. Ova stranica radi samo dok nema nijednog korisnika.</p>
 <label for="n">Ime i prezime</label><input id="n" required>
 <label for="u">Korisničko ime</label><input id="u" autocapitalize="none" spellcheck="false" required>
@@ -41,9 +41,9 @@ export const SETUP_HTML = page('BIS građevinski program – postavljanje', `<fo
 try{const u=$('#u').value,k=await stretch(u,$('#p').value);await api('/api/setup',{username:u,name:$('#n').value,key:k});await api('/api/login',{username:u,key:k});location.href='/admin'}
 catch(x){msg(x.message);b.disabled=false}};`);
 
-export const ADMIN_HTML = page('BIS građevinski program – korisnici', `<div class="wide">
+export const ADMIN_HTML = page('BIS program – korisnici', `<div class="wide">
 <div class="top"><h1>Korisnici</h1><button onclick="location.href='/'">Otvori program</button><button id="out">Odjava</button></div>
-<p class="sub">Korisnik može ući dok je uključen i dok mu vrijedi datum. Nakon uplate produlji ga za mjesec; ako više ne koristi program, isključi ga. Podaci mu ostaju spremljeni.</p>
+<p class="sub">Korisnik može ući dok je uključen i dok mu vrijedi datum. Nakon uplate produlji ga za mjesec; ako više ne koristi program, isključi ga (podaci mu ostaju) ili ga izbriši (trajno, zajedno s projektima).</p>
 <div class="msg" id="msg" role="alert"></div>
 <table><thead><tr><th>Korisnik</th><th>Tvrtka</th><th>Vrste programa</th><th>Vrijedi do</th><th>Stanje</th><th>Radnje</th></tr></thead><tbody id="rows"></tbody></table>
 <h2>Novi korisnik</h2><form class="grid" id="nf" autocomplete="off">
@@ -61,11 +61,12 @@ async function load(){const r=await api('/api/admin/users');T=r.today;$('#rows')
 return '<tr data-id="'+u.id+'" data-u="'+esc(u.username)+'"><td><b>'+esc(u.username)+'</b><small>'+esc(u.name)+(adm?' · administrator':'')+'</small></td><td>'+esc(u.company)+'</td>'
 +'<td>'+(adm?'sve':'<div class="chk">'+Object.keys(M).map((k)=>'<label><input type="checkbox" data-mode="'+k+'"'+(u.modes.includes(k)?' checked':'')+'>'+M[k]+'</label>').join('')+'</div>')+'</td>'
 +'<td>'+(adm?'bez roka':dat(u.validUntil))+'</td><td><span class="pill '+st[0]+'">'+st[1]+'</span></td>'
-+'<td><div class="acts">'+(adm?'':'<button data-a="m1">+1 mjesec</button><button data-a="m12">+1 godina</button><button data-a="tg">'+(u.active?'Isključi':'Uključi')+'</button>')+'<button data-a="pw">Nova lozinka</button></div></td></tr>'}).join('')}
++'<td><div class="acts">'+(adm?'':'<button data-a="m1">+1 mjesec</button><button data-a="m12">+1 godina</button><button data-a="tg">'+(u.active?'Isključi':'Uključi')+'</button>')+'<button data-a="pw">Nova lozinka</button>'+(adm?'':'<button data-a="del" class="d">Izbriši</button>')+'</div></td></tr>'}).join('')}
 async function act(id,body,ok){try{await api('/api/admin/users/'+id,body);msg(ok,true);await load()}catch(x){msg(x.message)}}
 $('#rows').onclick=async(e)=>{const b=e.target.closest('button[data-a]');if(!b)return;const tr=b.closest('tr'),id=tr.dataset.id,u=tr.dataset.u,a=b.dataset.a;
 if(a==='m1')act(id,{addMonths:1,active:true},u+': produljeno za mjesec dana.');else if(a==='m12')act(id,{addMonths:12,active:true},u+': produljeno za godinu dana.');
 else if(a==='tg'){const on=b.textContent==='Uključi';act(id,{active:on},u+(on?': uključen.':': isključen i odjavljen.'))}
+else if(a==='del'){const t=prompt('TRAJNO BRISANJE: korisnik '+u+' i svi njegovi projekti i nacrti bit će izbrisani i ne mogu se vratiti.\\n\\nZa potvrdu upiši njegovo korisničko ime:');if(t===null)return;if(t.trim().toLowerCase()!==u)return msg('Korisničko ime se ne podudara. Ništa nije izbrisano.');try{await api('/api/admin/users/'+id,null,'DELETE');msg(u+': trajno izbrisan.',true);await load()}catch(x){msg(x.message)}}
 else if(a==='pw'){const p=prompt('Nova lozinka za '+u+' (najmanje 8 znakova):');if(p===null)return;if(p.length<8)return msg('Lozinka mora imati najmanje 8 znakova.');act(id,{key:await stretch(u,p)},u+': lozinka je promijenjena.')}};
 $('#rows').onchange=(e)=>{const c=e.target.closest('[data-mode]');if(!c)return;const tr=c.closest('tr');act(tr.dataset.id,{modes:[...tr.querySelectorAll('[data-mode]:checked')].map((x)=>x.dataset.mode)},tr.dataset.u+': vrste programa su spremljene.')};
 $('#nf').onsubmit=async(e)=>{e.preventDefault();const b=$('#nb');b.disabled=true;try{const u=$('#nu').value;

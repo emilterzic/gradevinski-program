@@ -1,6 +1,6 @@
 {
-  // BIS građevinski program na Cloudflareu: Worker (prijava, podaci) + statičke datoteke programa iz mape web/
-  "name": "gradevinski-program",
+  // BIS program na Cloudflareu: Worker (prijava, podaci) + statičke datoteke programa iz mape web/
+  "name": "bis-program",
   "main": "server/worker.js",
   "compatibility_date": "2026-11-13",
   // javna adresa <naziv>.<račun>.workers.dev mora biti uključena dok nema vlastite domene
