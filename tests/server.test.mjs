@@ -50,6 +50,14 @@ const bin = new Uint8Array(2500000); for (let i = 0; i < bin.length; i++) bin[i]
 t = await (await call('/api/files', { method: 'POST', cookie: U, body: bin, raw: true })).json(); assert.match(t.url, /^\/api\/files\/f_/);
 const back = new Uint8Array(await (await call(t.url, { cookie: U })).r.arrayBuffer()); assert.equal(back.length, bin.length); assert.ok(back.every((v, i) => v === bin[i]));
 assert.equal((await call(t.url, { cookie: U2 })).status, 404, 'drugi korisnik ne može do tuđeg nacrta');
+// 5b. datoteka u dijelovima (base64), usporedno slanje i preuzimanje
+const fid = 'f_' + 'ab'.repeat(12), CH = 720000, src = Buffer.from(bin), nparts = Math.ceil(src.length / CH);
+await Promise.all(Array.from({ length: nparts }, (_, k) => call(`/api/files/${fid}/part/${k}?parts=${nparts}&size=${src.length}`, { method: 'PUT', cookie: U, body: src.subarray(k * CH, (k + 1) * CH).toString('base64'), raw: true }).then((r) => assert.equal(r.status, 200))));
+const got = Buffer.concat(await Promise.all(Array.from({ length: nparts }, (_, k) => call(`/api/files/${fid}/part/${k}`, { cookie: U }).then(async (r) => Buffer.from(await r.r.text(), 'base64')))));
+assert.ok(got.equals(src), 'dijelovi se slažu u istu datoteku');
+assert.ok(Buffer.from(await (await call('/api/files/' + fid, { cookie: U })).r.arrayBuffer()).equals(src), 'i stara adresa vraća istu datoteku');
+assert.equal((await call(`/api/files/${fid}/part/0`, { cookie: U2 })).status, 404, 'drugi korisnik ne može do dijelova tuđeg nacrta');
+assert.equal((await call(`/api/files/${fid}/part/9?parts=4&size=100`, { method: 'PUT', cookie: U, body: 'AAAA', raw: true })).status, 400);
 // 6. isključenje, istek, produljenje
 const users = (await (await call('/api/admin/users', { cookie: A })).json()).users, id = users.find((x) => x.username === 'krov@firma.hr').id;
 const adm = (b) => call('/api/admin/users/' + id, { method: 'POST', cookie: A, body: b });
@@ -104,4 +112,13 @@ await call('/api/admin/users/' + au.id, { method: 'POST', cookie: A, body: { aiC
 t = await aiCall(N); assert.equal(t.status, 502); assert.match((await t.json()).error, /nema_kredita/); assert.doesNotMatch(JSON.stringify(await (await aiCall(N)).json()), /credit|anthropic/i, 'korisnik ne vidi tehničke detalje');
 assert.equal((await aiCall(null)).status, 401, 'AI samo za prijavljene');
 globalThis.fetch = realFetch;
+// 10. AI preko posrednika (servisna veza): licenca iz baze posrednika, model u zaglavlju, tijelo neizmijenjeno
+delete env.ANTHROPIC_API_KEY; let px = null, pxStatus = 200;
+env.PROXY_DB = { prepare: () => ({ first: async () => ({ license_key: 'bis_licenca_iz_baze' }) }) };
+env.AI_PROXY = { fetch: async (u, o) => { px = { u, lic: o.headers['X-License-Key'], model: o.headers['X-Model'], q: o.headers['X-Quote-Id'], len: o.body.byteLength }; return new Response(JSON.stringify(pxStatus === 200 ? { content: [{ type: 'text', text: 'Preko posrednika' }], stop_reason: 'end_turn', usage: { input_tokens: 500000, output_tokens: 0 }, cost_usd: 1 } : { error: 'Usluga je privremeno nedostupna. Javite se Bridgelineu (kod nema_kredita).', status: 400 }), { status: pxStatus === 200 ? 200 : 502 }); } };
+assert.equal((await (await call('/api/me', { cookie: N })).json()).ai, true, 'AI je uključen i bez vlastitog ključa');
+t = await aiCall(N); assert.equal(t.status, 200); assert.equal((await t.json()).content[0].text, 'Preko posrednika');
+assert.equal(px.lic, 'bis_licenca_iz_baze'); assert.equal(px.model, 'claude-sonnet-5-5'); assert.equal(px.q, 'bis-krov@firma.hr'); assert.equal(px.len, aiBody().length); assert.match(px.u, /\/v1\/messages$/);
+pxStatus = 502; t = await aiCall(N); assert.equal(t.status, 502); assert.match((await t.json()).error, /nema_kredita/);
+t = await aiCall(A); assert.equal(t.status, 502, 'administrator nema korisnički limit, ali vidi istu poruku');
 console.log('poslužitelj: sve provjere prolaze');

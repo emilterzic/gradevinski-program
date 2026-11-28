@@ -1,4 +1,4 @@
-// BIS program – v0.22
+// BIS program – v0.23
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -276,7 +276,8 @@ let pdfDoc = null, curPage = 1, zoom = 1, pageInfo = {}, renderTask = null, page
 async function loadPdfForProject() {
   pdfDoc = null; pageInfo = {}; curPage = 1;
   if (P.pdf && P.pdf.url && !P.pdf.url.startsWith('__')) {
-    try { pdfDoc = await pdfjsLib.getDocument({ url: P.pdf.url, isEvalSupported: false }).promise; }
+    // bajtovi nacrta se preuzimaju jednom i ostaju u memoriji do kraja rada (prebacivanje među nacrtima je trenutno)
+    try { const buf = await pdfBytesOf(P.pdf); pdfDoc = await pdfjsLib.getDocument({ data: buf.slice(0), isEvalSupported: false }).promise; }
     catch (e) { console.warn(e); if (!P.pdf.demo) toast('Nacrt se ne može otvoriti. Učitaj PDF ponovno.'); }
   } else if (P.pdf && P.pdf.session && sessionPdf[P.pdf.id]) {
     pdfDoc = await pdfjsLib.getDocument({ data: sessionPdf[P.pdf.id].slice(0), isEvalSupported: false }).promise;
@@ -284,8 +285,50 @@ async function loadPdfForProject() {
   if (pdfDoc) { await analyzeAllPages(); zoom = 0; }
 }
 const sessionPdf = {};
+const pdfBytes = {}; // id dokumenta → ArrayBuffer (samo za vrijeme rada)
+async function pdfBytesOf(d) {
+  if (pdfBytes[d.id]) return pdfBytes[d.id];
+  setSave('Učitavam nacrt…');
+  let buf;
+  if (WEB && d.parts && d.assetId) buf = await webFileGet(d.assetId, d.parts, d.size, (p) => setSave(`Učitavam nacrt… ${Math.round(p * 100)} %`));
+  else { const r = await fetch(d.url); if (!r.ok) throw new Error('nacrt ' + r.status); buf = await r.arrayBuffer(); }
+  setSave(cap.db ? 'Spremljeno u oblak' : 'Spremljeno u ovom pregledniku');
+  return (pdfBytes[d.id] = buf);
+}
+// web: nacrt je na poslužitelju u dijelovima (base64 tekst); dijelovi se šalju i preuzimaju usporedno
+const WEB_CH = 720000;
+async function pool(n, jobs) { let i = 0; const run = async () => { while (i < jobs.length) { const k = i++; await jobs[k](); } }; await Promise.all(Array.from({ length: Math.min(n, jobs.length) }, run)); }
+async function webFileGet(id, parts, size, onProg) {
+  const out = new Uint8Array(size); let done = 0;
+  await pool(6, Array.from({ length: parts }, (_, k) => async () => {
+    const r = await fetch(`/api/files/${id}/part/${k}`); if (!r.ok) throw new Error('nacrt ' + r.status);
+    const t = atob(await r.text()), off = k * WEB_CH; for (let j = 0; j < t.length; j++) out[off + j] = t.charCodeAt(j);
+    if (onProg) onProg(++done / parts);
+  }));
+  return out.buffer;
+}
+async function webFilePut(blob, onProg) {
+  const buf = await blob.arrayBuffer(), id = 'f_' + [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join(''), parts = Math.max(1, Math.ceil(buf.byteLength / WEB_CH)); let done = 0;
+  const b64 = (ab) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1] || ''); fr.onerror = rej; fr.readAsDataURL(new Blob([ab])); });
+  await pool(4, Array.from({ length: parts }, (_, k) => async () => {
+    const body = await b64(buf.slice(k * WEB_CH, (k + 1) * WEB_CH));
+    const r = await fetch(`/api/files/${id}/part/${k}?parts=${parts}&size=${buf.byteLength}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body });
+    if (!r.ok) { let o = {}; try { o = await r.json(); } catch {} throw new Error(o.error || 'Spremanje nacrta nije uspjelo.'); }
+    if (onProg) onProg(++done / parts);
+  }));
+  return { id, url: '/api/files/' + id, parts, size: buf.byteLength };
+}
+// Prva stranica se analizira odmah (da se nacrt prikaže bez čekanja), ostale u pozadini; tko treba sve stranice čeka pagesReady.
+let pagesReady = Promise.resolve();
 async function analyzeAllPages() {
-  for (let i = 1; i <= pdfDoc.numPages; i++) {
+  const doc = pdfDoc; await analyzePage(doc, 1);
+  pagesReady = (async () => {
+    for (let i = 2; i <= doc.numPages; i++) { if (pdfDoc !== doc) return; await analyzePage(doc, i); if (i % 2 === 0) await new Promise((r) => setTimeout(r, 0)); }
+    if (pdfDoc === doc && doc.numPages > 1 && view === 'nacrt') { try { renderThumbs(); } catch (e) { console.warn(e); } }
+  })();
+}
+async function analyzePage(pdfDoc, i) {
+  {
     const page = await pdfDoc.getPage(i);
     const vp = page.getViewport({ scale: 1 });
     const tc = await page.getTextContent();
@@ -1484,6 +1527,7 @@ async function render3D() {
   const had = !!P.model;
   if (!ensureModel()) return show3dEmpty(true);
   show3dEmpty(false); if (!had) touch(false);
+  show3dWarn();
   renderSide3d();
   if (!V) {
     try { V = await (V3P ||= VZ.Viz3D.create($('#v3dHost'), { onPick: show3dInfo })); }
@@ -1496,9 +1540,30 @@ async function render3D() {
   renderSide3d(); renderStages3d();
 }
 // projekt bez 3D modela: jasno stanje i dva puta do modela (AI iz nacrta ili dimenzije), nikad izmišljena kuća
+// Model i otvoreni nacrt moraju biti isti objekt: ako 3D model potječe iz drugog nacrta, to mora jasno pisati.
+function modelDocId() { return P.modelDoc || (P.modelType === 'nacrt' ? (P.docs.find((d) => d.demo) || {}).id : null) || null; }
+function show3dWarn() {
+  let el = $('#v3dWarn'); const src = modelDocId(), cur = P.pdf, bad = !!(P.model && src && cur && !cur.demo && src !== cur.id);
+  if (!bad) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'v3dWarn'; el.className = 'v3d-warn'; $('#v3dHost').append(el); }
+  const from = (P.docs.find((d) => d.id === src) || {}).name || 'drugog nacrta';
+  el.innerHTML = `<span><b>Ovo nije model otvorenog nacrta.</b> 3D model je složen iz „${esc(from)}”, a otvoren je nacrt „${esc(cur.name)}”, koji još nije pročitan.</span>
+    ${hasDemo() ? '<button class="btn small primary" id="w3New">Otvori ovaj nacrt kao novi projekt</button>' : '<button class="btn small primary" id="w3Ai">Složi model iz ovog nacrta</button>'}`;
+  const n = $('#w3New', el), a = $('#w3Ai', el);
+  if (n) n.onclick = () => splitDocToNew();
+  if (a) a.onclick = () => aiBuildModel();
+}
+// nacrt koji je završio u tuđem projektu (npr. u primjeru) seli se u vlastiti novi projekt
+async function splitDocToNew() {
+  const d = P.pdf; if (!d || d.demo) return;
+  P.docs = P.docs.filter((x) => x !== d); P.meas = P.meas.filter((m) => m.doc !== d.id); P.docId = (P.docs[0] || {}).id || null; linkDoc(P); touch();
+  await startProject(d.name.replace(/\.pdf$/i, '').slice(0, 80) || 'Novi projekt');
+  P.docs.push(d); P.docId = d.id; linkDoc(P); await loadPdfForProject(); touch(); renderAll(); showView('3d'); autoRead();
+}
 function show3dEmpty(on) {
   let el = $('#v3dEmpty');
   if (!on) { if (el) el.remove(); return; }
+  const w = $('#v3dWarn'); if (w) w.remove();
   if (!el) { el = document.createElement('div'); el.id = 'v3dEmpty'; el.className = 'v3d-empty'; $('#v3dHost').append(el); }
   const docs = P.docs.filter((d) => !d.demo), can = !!pdfDoc && cap.sample && cap.imagesOk;
   el.innerHTML = `<div class="card"><h2>3D model još nije složen</h2>
@@ -1554,6 +1619,8 @@ async function aiBuildModel() {
   if (aiModelBusy) return toast('AI već slaže model, pričekaj.');
   if (!pdfDoc) return toast('Prvo učitaj nacrte (PDF) u kartici Nacrt.');
   openChat();
+  if (cap.sample && cap.imagesOk) { let ready = false; pagesReady.then(() => { ready = true; }); await Promise.resolve(); if (!ready) addMsg('assistant', 'Pripremam stranice nacrta za čitanje…'); }
+  await pagesReady;
   if (!cap.sample || !cap.imagesOk) return addMsg('sys', (WEB ? 'AI čitanje nacrta na ovoj adresi još nije uključeno.' : 'AI čitanje nacrta ovdje nije dostupno (otvori program na claude.ai i dopusti mu korištenje Claudea).') + ' 3D model možeš zadati vrstom objekta i dimenzijama.');
   aiModelBusy = true; const say = (t) => { addMsg("sys", t); aiReadLog({ ok: null, step: t }); }, num = (v) => (isFinite(+v) ? +v : null);
   try {
@@ -1703,7 +1770,7 @@ async function aiBuildModel() {
     const base = MD.modelFromAi(spec);
     pushUndo();
     if (P.model?.colors) base.colors = P.model.colors;
-    P.modelSpec = spec; P.specManual = undefined; P.modelBase = undefined; P.modelType = 'ai'; P.modelDims = undefined; P.model = base; MD.applyBuild(P.model, P.build);
+    P.modelSpec = spec; P.specManual = undefined; P.modelBase = undefined; P.modelType = 'ai'; P.modelDoc = P.docId; P.modelDims = undefined; P.model = base; MD.applyBuild(P.model, P.build);
     // veća zgrada ili visoke etaže: zidana izvedba ne prolazi osnovna pravila, pa predlažem armirani beton i temeljnu ploču
     const nFl = MD.floorsAll(base), tall = nFl >= 4 || MD.quantities(base).hMax > 4;
     setBuild({ krovOblik: spec.roof, ...(tall && P.build.konstrukcija !== 'skelet' ? { konstrukcija: 'ab', temelji: 'ploca' } : {}) }, true);
@@ -2131,20 +2198,44 @@ function removeDoc(id) {
     touch(); renderAll();
   });
 }
+// Novi projekt za novi objekt (isti koraci kao „Novi projekt” u popisu projekata).
+async function startProject(name) { await saveNow(); P = newProject(name, false); pdfDoc = null; pageInfo = {}; undoStack = []; touch(); await saveNow(); renderAll(); }
+const askNewOrSame = (name) => new Promise((res) => openModal(`<h3>Novi nacrt</h3><p>„${esc(name)}”: je li to novi objekt ili još jedan nacrt objekta „${esc(P.name)}”?</p><p class="note">Za novi objekt otvaram novi projekt i 3D model slažem samo iz tog nacrta.</p>
+  <div class="btns"><button class="btn" id="mNo">Odustani</button><button class="btn" id="mSame">Isti objekt: dodaj ovom projektu</button><button class="btn primary" id="mNew">Novi objekt: novi projekt</button></div>`, (m) => {
+  $('#mNo', m).onclick = () => { closeModal(); res(null); }; $('#mSame', m).onclick = () => { closeModal(); res('same'); }; $('#mNew', m).onclick = () => { closeModal(); res('new'); }; }));
+// nakon novog nacrta bez modela: odmah čitanje nacrta u 3D model, ili jasna poruka zašto ga nema
+function autoRead() {
+  if (P.model || !pdfDoc) return;
+  if (cap.sample && cap.imagesOk) aiBuildModel();
+  else addMsg('sys', WEB ? 'Nacrt je učitan, ali AI čitanje nacrta na ovoj adresi nije uključeno, pa iz njega ne mogu složiti 3D model. 3D prikaz ostaje prazan dok ne uključiš AI ili ne zadaš vrstu objekta i dimenzije.' : 'Nacrt je učitan. AI čitanje nacrta ovdje nije dostupno, pa 3D model zadaj vrstom objekta i dimenzijama.');
+}
 async function onPdfFile(file) {
   if (!file) return;
-  const buf = await file.arrayBuffer();
-  let stored = null;
-  if (cap.assets) { try { setSave('Spremam nacrt…'); stored = await cap.assets.upload(new Blob([buf], { type: 'application/pdf' })); } catch (e) { console.warn(e); } }
-  // novi dokument se DODAJE na popis; postojeći nacrti, mjerila i izmjere ostaju
-  const d = { id: uid(), name: file.name, pageScale: {}, ...(stored ? { url: stored.url, assetId: stored.id } : { session: true }) };
-  if (!stored) { sessionPdf[d.id] = buf.slice(0); toast('Nacrt je otvoren, ali nije spremljen: sljedeći put ga učitaj ponovno.', 4000); }
+  const buf = await file.arrayBuffer(), nice = file.name.replace(/\.pdf$/i, '').slice(0, 80) || 'Novi projekt';
+  // Novi nacrt u pravilu znači novi objekt. Iz primjera se uvijek otvara novi projekt (primjer se ne miješa s tuđim nacrtima);
+  // u vlastitom projektu koji već ima nacrt ili model korisnik bira.
+  if (hasDemo()) await startProject(nice);
+  else if (P.docs.length || P.model) { const ans = await askNewOrSame(file.name); if (ans === null) return; if (ans === 'new') await startProject(nice); }
+  const d = { id: uid(), name: file.name, pageScale: {} };
+  pdfBytes[d.id] = buf; sessionPdf[d.id] = buf; d.session = true;
   P.docs.push(d); P.docId = d.id; linkDoc(P);
-  if (!stored) pdfDoc = await pdfjsLib.getDocument({ data: buf.slice(0), isEvalSupported: false }).promise;
-  else await loadPdfForProject();
-  if (!stored) await analyzeAllPages();
+  // nacrt se prikazuje odmah iz memorije; spremanje na poslužitelj ide u pozadini
+  pdfDoc = await pdfjsLib.getDocument({ data: buf.slice(0), isEvalSupported: false }).promise; pageInfo = {};
+  await analyzeAllPages();
   curPage = 1; zoom = 0; touch(); showView('nacrt');
+  if (cap.assets) {
+    const proj = P;
+    (async () => {
+      try {
+        setSave('Spremam nacrt…');
+        const st = await cap.assets.upload(new Blob([buf], { type: 'application/pdf' }), (p) => { if (P === proj) setSave(`Spremam nacrt… ${Math.round(p * 100)} %`); });
+        delete d.session; d.url = st.url; d.assetId = st.id; if (st.parts) { d.parts = st.parts; d.size = st.size; }
+        if (P === proj) { linkDoc(P); touch(); }
+      } catch (e) { console.warn(e); if (P === proj) toast('Nacrt je otvoren, ali nije spremljen: sljedeći put ga učitaj ponovno.', 5000); }
+    })();
+  } else toast('Nacrt je otvoren, ali nije spremljen: sljedeći put ga učitaj ponovno.', 4000);
   addMsg('assistant', `Učitan je nacrt „${file.name}” (${pdfDoc.numPages} str.). ${Object.keys(P.pageScale).length ? 'Mjerilo sam pročitao iz zaglavlja.' : 'Mjerilo nisam našao: postavi ga alatom Mjerilo.'} Klikni „Predloži količine s nacrta” i predložit ću stavke za odabranu stranicu.${P.model ? '' : ' Za 3D prikaz otvori karticu 3D prikaz i pokreni „AI: složi 3D model iz nacrta”.'}`);
+  autoRead();
 }
 async function onJsonFile(file) {
   if (!file) return;
@@ -2176,7 +2267,7 @@ async function webCaps() {
     }),
     get: async () => { const o = await call('/api/docs'); return { docs: o.docs.map((d) => ({ id: d.id, data: () => ({ name: d.name, updatedAt: d.updatedAt }) })) }; },
   }) };
-  cap.assets = { upload: (blob) => call('/api/files', { method: 'POST', headers: { 'content-type': blob.type || 'application/pdf' }, body: blob }) };
+  cap.assets = { upload: (blob, onProg) => webFilePut(blob, onProg) };
   cap.dl = { save: async ({ filename, data }) => { const a = document.createElement('a'); a.href = URL.createObjectURL(data); a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); } };
   // govor: prepoznavanje u pregledniku (Chrome, Edge); gdje ga nema, gumb „Govori” javlja da nije dostupno
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;

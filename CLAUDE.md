@@ -108,3 +108,11 @@
   U pregledniku `cap.sample` iz `webCaps()` ima isto sučelje kao u Claudeu i sam vrti petlju alata (`tools[].execute`).
   Cijene modela su u `AI_PRICES` (provjeriti kad se promijene). Lokalna provjera: `BIS_MOCK_AI=1 node tests/dev-server.mjs`.
   Brisanje korisnika (`DELETE /api/admin/users/:id`) uklanja i njegove sesije, projekte, nacrte i potrošnju.
+- Novi nacrt i brzina (v0.23): učitani PDF u pravilu znači novi objekt. Iz primjera se uvijek otvara novi projekt (`startProject`),
+  u vlastitom projektu s nacrtom ili modelom korisnik bira (`askNewOrSame`); nakon učitavanja bez modela odmah ide `autoRead()`
+  (AI čitanje ili jasna poruka). `P.modelDoc` pamti iz kojeg je nacrta model; ako otvoreni nacrt nije taj, `show3dWarn()` to
+  jasno piše (nikad ne prikazivati stari model kao da je novi nacrt). Nacrt se prikazuje odmah iz memorije (`pdfBytes`), a na
+  poslužitelj ide u pozadini u dijelovima (`webFilePut`/`webFileGet`, `/api/files/:id/part/:n`, base64 tekst, usporedno).
+  `analyzeAllPages` analizira prvu stranicu odmah, ostale u pozadini; tko treba sve stranice čeka `pagesReady`.
+- AI na webu ide preko posrednika `bridgeline-agent-proxy` (servisna veza `AI_PROXY`, licenca iz `PROXY_DB`, klijent „BIS program”);
+  vlastita tajna `ANTHROPIC_API_KEY` nije potrebna, a ako postoji ima prednost. Administrator nema korisnički mjesečni limit.

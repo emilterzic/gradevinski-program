@@ -6,8 +6,14 @@
   // javna adresa <naziv>.<račun>.workers.dev mora biti uključena dok nema vlastite domene
   "workers_dev": true,
   "assets": { "directory": "./web", "binding": "ASSETS", "run_worker_first": true },
-  "d1_databases": [{ "binding": "DB", "database_name": "bis-gradevinski-program", "database_id": "d734744c-c163-4726-b6b2-0baa6f2478fd" }],
-  // AI: ključ se NE upisuje ovdje nego kao tajna ANTHROPIC_API_KEY (Cloudflare → bis-program → Settings → Variables and Secrets)
+  "d1_databases": [
+    { "binding": "DB", "database_name": "bis-gradevinski-program", "database_id": "d734744c-c163-4726-b6b2-0baa6f2478fd" },
+    // baza posrednika za AI: iz nje se čita samo licenca klijenta „BIS program”
+    { "binding": "PROXY_DB", "database_name": "bridgeline-usage", "database_id": "d845f59a-9e1e-43f4-a202-de56aa4f4613" }
+  ],
+  // AI ide preko postojećeg posrednika (isti AI račun i isti pregled potrošnje kao Agent za stolariju)
+  "services": [{ "binding": "AI_PROXY", "service": "bridgeline-agent-proxy" }],
+  // Vlastiti ključ (tajna ANTHROPIC_API_KEY) nije potreban; ako se ikad doda, ima prednost pred posrednikom
   "vars": { "AI_MODEL": "claude-sonnet-5-5", "AI_MONTHLY_CAP_USD": "15" },
   "keep_vars": true,
   "observability": { "enabled": true }

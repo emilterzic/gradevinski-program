@@ -244,6 +244,7 @@ table.recap tr.total td { font-weight: 700; border-bottom: 0; }
 .bimrow[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .bimbox input[type=range] { width: 100%; margin: 8px 0 4px; }
 .webuser { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; } .webuser span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.v3d-warn { position: absolute; left: 12px; right: 12px; top: 12px; z-index: 6; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-radius: 12px; background: #fff4d6; border: 1px solid #e0b040; color: #4a3500; font-size: 13.5px; box-shadow: 0 4px 16px rgba(0,0,0,.12); } .v3d-warn span { flex: 1; min-width: 220px; }
 .modesel { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .modesel select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13.5px; font-weight: 600; }
 body.mode-krov details.ogrp:not([data-g="objekt"]):not([data-g="krovOblik"]):not([data-g="pokrov"]), body.mode-zemlja details.ogrp:not([data-g="objekt"]):not([data-g="tlo"]):not([data-g="temelji"]), body.mode-stolarija details.ogrp:not([data-g="objekt"]):not([data-g="stolarija"]):not([data-g="staklo"]):not([data-g="klizna"]), body.mode-trade .stat, body.mode-trade .bsum { display: none; }
@@ -382,7 +383,7 @@ td.pc .dot-ai, td.pc .dot-kat { position: absolute; left: 3px; top: 16px; margin
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><h1>BIS program</h1><small>v0.22</small></div>
+  <div class="brand"><h1>BIS program</h1><small>v0.23</small></div>
   <button class="proj-btn" id="projBtn" aria-haspopup="true"><span id="projName">Projekt</span> ▾</button>
   <div class="seg" role="group" aria-label="Uloga">
     <button id="roleP" aria-pressed="true">Projektant</button>

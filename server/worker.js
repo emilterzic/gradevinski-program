@@ -13,6 +13,11 @@ const AI_PRICES = { 'claude-sonnet-5-5': { in: 2.0, out: 10.0, cacheRead: 0.10, 
 const aiModel = (env) => (AI_PRICES[env.AI_MODEL] ? env.AI_MODEL : 'claude-sonnet-5-5');
 const aiCap = (env, u) => (u.ai_cap !== null && u.ai_cap !== undefined ? +u.ai_cap : Math.max(0, +(env.AI_MONTHLY_CAP_USD || 15)));
 const month = () => today().slice(0, 7);
+// AI je uključen ako Worker ima vlastiti ključ ili je povezan s posrednikom bridgeline-agent-proxy (servisna veza AI_PROXY).
+// Licenca za posrednika čita se iz njegove baze (PROXY_DB, klijent „BIS program”): ne stoji ni u kodu ni u postavkama.
+const aiOn = (env) => !!(env.ANTHROPIC_API_KEY || (env.AI_PROXY && env.PROXY_DB));
+let proxyKey = null;
+async function proxyLicense(env) { if (proxyKey) return proxyKey; const r = await env.PROXY_DB.prepare("SELECT license_key FROM clients WHERE name = 'BIS program' AND active = 1").first(); return (proxyKey = r ? r.license_key : null); }
 function aiCost(model, u) { const p = AI_PRICES[model]; if (!p) return 0; return Math.round(((u.input_tokens || 0) * p.in + (u.output_tokens || 0) * p.out + (u.cache_read_input_tokens || 0) * p.cacheRead + (u.cache_creation_input_tokens || 0) * p.cacheWrite)) / 1e6; }
 const enc = new TextEncoder();
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -84,7 +89,7 @@ async function admin(request, env, path, me) {
   if (path === '/api/admin/users' && request.method === 'GET') {
     const r = await env.DB.prepare('SELECT * FROM users ORDER BY role, company, username').all();
     const a = await env.DB.prepare('SELECT user_id, cost_usd, calls FROM ai_month WHERE month = ?').bind(month()).all(), by = Object.fromEntries(a.results.map((x) => [x.user_id, x]));
-    return json({ users: r.results.map((u) => ({ ...pub(u), aiCost: by[u.id] ? by[u.id].cost_usd : 0, aiCalls: by[u.id] ? by[u.id].calls : 0, aiLimit: aiCap(env, u) })), today: today(), ai: !!env.ANTHROPIC_API_KEY, aiModel: aiModel(env) });
+    return json({ users: r.results.map((u) => ({ ...pub(u), aiCost: by[u.id] ? by[u.id].cost_usd : 0, aiCalls: by[u.id] ? by[u.id].calls : 0, aiLimit: aiCap(env, u) })), today: today(), ai: aiOn(env), aiModel: aiModel(env) });
   }
   if (path === '/api/admin/users' && request.method === 'POST') return newUser(env, await body(request), 'user');
   const m = path.match(/^\/api\/admin\/users\/(u_[0-9a-f]{16})$/);
@@ -121,21 +126,31 @@ async function admin(request, env, path, me) {
 // AI: zahtjev iz preglednika prosljeđuje se AI servisu bez raspakiravanja (tijelo sa slikama nacrta može imati više MB,
 // a besplatni plan dopušta malo procesorskog vremena). Provjerava se samo početak tijela: model mora biti dopušteni.
 async function ai(request, env, me) {
-  if (!env.ANTHROPIC_API_KEY) return err('AI na ovoj adresi još nije uključen.', 503);
+  if (!aiOn(env)) return err('AI na ovoj adresi još nije uključen.', 503);
   const model = aiModel(env), mo = month();
   const spent = await env.DB.prepare('SELECT cost_usd FROM ai_month WHERE user_id = ? AND month = ?').bind(me.id, mo).first();
-  if (spent && spent.cost_usd >= aiCap(env, me)) return err('Dosegnut je mjesečni limit AI-ja za ovaj račun. Javite se Bridgeline Intelligence Systems.', 402);
+  if (me.role !== 'admin' && spent && spent.cost_usd >= aiCap(env, me)) return err('Dosegnut je mjesečni limit AI-ja za ovaj račun. Javite se Bridgeline Intelligence Systems.', 402);
   const buf = await request.arrayBuffer(); if (!buf.byteLength || buf.byteLength > AI_MAX_BODY) return err('Zahtjev je prazan ili prevelik.', 413);
   const head = new TextDecoder().decode(new Uint8Array(buf, 0, Math.min(90, buf.byteLength)));
   if (!head.startsWith('{"model":"' + model + '",')) return err('Model nije dopušten.', 400);
-  const up = await fetch(AI_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': AI_VERSION }, body: buf });
+  let up;
+  if (env.ANTHROPIC_API_KEY) up = await fetch(AI_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': AI_VERSION }, body: buf });
+  else {
+    const lic = await proxyLicense(env); if (!lic) return err('AI na ovoj adresi još nije uključen.', 503);
+    up = await env.AI_PROXY.fetch('https://ai-proxy/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'X-License-Key': lic, 'X-Model': model, 'X-Quote-Id': ('bis-' + me.username).slice(0, 80), 'X-Quote-Label': encodeURIComponent('BIS program: ' + (me.company || me.name || me.username)).slice(0, 160), 'X-Step': 'bis' }, body: buf });
+  }
   const text = await up.text(); let data = null; try { data = JSON.parse(text); } catch {}
-  const usage = (data && data.usage) || {}, cost = up.ok ? aiCost(model, usage) : 0;
+  const good = up.ok && data && Array.isArray(data.content), usage = (data && data.usage) || {}, cost = good ? aiCost(model, usage) : 0;
   await env.DB.prepare('INSERT INTO ai_month (user_id, month, cost_usd, calls) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, month) DO UPDATE SET cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1').bind(me.id, mo, cost).run();
-  if (!up.ok || !data) {
+  if (!good) {
     // korisnik ne vidi tehničke detalje; razlog koji rješava vlasnik ide u dnevnik Workera i kao kratki kod
-    const t = text.toLowerCase(), kod = t.includes('credit balance') ? 'nema_kredita' : up.status === 401 || t.includes('x-api-key') ? 'api_kljuc' : t.includes('limit') && up.status !== 429 && up.status !== 529 ? 'limit_racuna' : '';
     console.error('AI', up.status, text.slice(0, 300));
+    if (!env.ANTHROPIC_API_KEY) { // odgovor posrednika je već pisan za korisnika
+      if (up.status === 401) proxyKey = null;
+      if (up.status === 402) return err('Dosegnut je mjesečni limit AI-ja za BIS program. Javite se Bridgeline Intelligence Systems.', 402);
+      return err((data && typeof data.error === 'string' && up.status !== 401 ? data.error : 'AI trenutno nije dostupan. Pokušaj ponovno za minutu.'), up.status === 429 ? 429 : 502);
+    }
+    const t = text.toLowerCase(), kod = t.includes('credit balance') ? 'nema_kredita' : up.status === 401 || t.includes('x-api-key') ? 'api_kljuc' : t.includes('limit') && up.status !== 429 && up.status !== 529 ? 'limit_racuna' : '';
     if (up.status === 429 || up.status === 529) return err('AI je trenutno zauzet. Pokušaj ponovno za minutu.', 429);
     return err(kod ? 'AI je privremeno nedostupan. Javite se Bridgeline Intelligence Systems (kod ' + kod + ').' : 'AI trenutno nije dostupan. Pokušaj ponovno za minutu.', 502);
   }
@@ -175,6 +190,22 @@ async function files(request, env, path, me) {
     else { const n = Math.ceil(buf.byteLength / FILE_CHUNK); for (let i = 0; i < n; i++) await env.DB.prepare('INSERT INTO files (user_id, id, part, parts, type, size, created_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(me.id, id, i, n, type, buf.byteLength, now, buf.slice(i * FILE_CHUNK, (i + 1) * FILE_CHUNK)).run(); }
     return json({ id, url: '/api/files/' + id });
   }
+  // v0.23: nacrt u dijelovima kao base64 tekst. Preglednik dijelove šalje i preuzima usporedno, a Worker ih samo
+  // prepisuje u bazu i iz nje (bez pretvaranja), pa je učitavanje nacrta višestruko brže i ne troši procesorsko vrijeme.
+  const pm = path.match(/^\/api\/files\/(f_[0-9a-f]{24})\/part\/(\d{1,3})$/);
+  if (pm && request.method === 'PUT') {
+    const q = new URL(request.url).searchParams, n = +pm[2], parts = +q.get('parts'), size = +q.get('size');
+    if (!(parts >= 1 && parts <= 140 && n < parts && size > 0 && size <= parts * 720000)) return err('Neispravan dio datoteke.');
+    const t = await request.text(); if (!t.length || t.length > 1000000) return err('Dio datoteke je prazan ili prevelik.', 413);
+    await env.DB.prepare('INSERT OR REPLACE INTO files (user_id, id, part, parts, type, size, created_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(me.id, pm[1], n, parts, 'b64', size, Date.now(), t).run();
+    return json({ ok: true });
+  }
+  if (pm && request.method === 'GET') {
+    const r = await env.DB.prepare('SELECT type, data FROM files WHERE user_id = ? AND id = ? AND part = ?').bind(me.id, pm[1], +pm[2]).first();
+    if (!r) return err('Datoteka ne postoji.', 404);
+    if (r.type !== 'b64') return err('Datoteka je u starom zapisu.', 409);
+    return new Response(r.data, { headers: { 'content-type': 'text/plain', 'cache-control': 'private, max-age=31536000, immutable' } });
+  }
   const m = path.match(/^\/api\/files\/(f_[0-9a-f]{24})$/);
   if (m && request.method === 'GET') {
     const h = { 'cache-control': 'private, max-age=86400' };
@@ -187,9 +218,9 @@ async function files(request, env, path, me) {
       if (i >= meta.parts) return c.close();
       const r = await env.DB.prepare('SELECT data FROM files WHERE user_id = ? AND id = ? AND part = ?').bind(me.id, m[1], i++).first();
       if (!r) return c.close();
-      c.enqueue(r.data instanceof ArrayBuffer ? new Uint8Array(r.data) : Uint8Array.from(r.data));
+      c.enqueue(meta.type === 'b64' ? Uint8Array.from(atob(r.data), (ch) => ch.charCodeAt(0)) : r.data instanceof ArrayBuffer ? new Uint8Array(r.data) : Uint8Array.from(r.data));
     } });
-    return new Response(stream, { headers: { ...h, 'content-type': meta.type || 'application/pdf' } });
+    return new Response(stream, { headers: { ...h, 'content-type': meta.type === 'b64' ? 'application/pdf' : meta.type || 'application/pdf' } });
   }
   return err('Nepoznato.', 404);
 }
@@ -221,7 +252,7 @@ export default {
         if (path.startsWith('/api/')) return err('Prijava je istekla. Prijavi se ponovno.', 401);
         return (request.headers.get('accept') || '').includes('text/html') ? Response.redirect(url.origin + '/login', 302) : new Response('Potrebna je prijava.', { status: 401 });
       }
-      if (path === '/api/me') return json({ ...pub(me), ai: !!env.ANTHROPIC_API_KEY, aiModel: aiModel(env) });
+      if (path === '/api/me') return json({ ...pub(me), ai: aiOn(env), aiModel: aiModel(env) });
       if (path === '/api/ai' && method === 'POST') return await ai(request, env, me);
       if (path === '/api/password' && method === 'POST') {
         const b = await body(request); if (!okKey(b.oldKey) || !okKey(b.newKey)) return err('Lozinka nije ispravno poslana.');
