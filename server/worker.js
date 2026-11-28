@@ -6,7 +6,7 @@ import { LOGIN_HTML, ADMIN_HTML, SETUP_HTML } from './pages.js';
 const SESSION_DAYS = 30, COOKIE = 'bis_s', DOC_CHUNK = 600000, FILE_CHUNK = 1000000, MAX_DOC = 24e6, MAX_FILE_DB = 40e6, MAX_FILE_R2 = 200e6;
 const MODES = ['gradnja', 'krov', 'zemlja', 'stolarija'];
 // Inačica programa: ista vrijednost stoji u web/app.js (APP_V). Kad se razlikuju, otvorena kartica se sama osvježi.
-export const APP_V = '0.25';
+export const APP_V = '0.26';
 // kratki dijagnostički zapis u bazi (bez osobnih podataka osim korisničkog imena): što poslužitelj vidi i što je zadnje pošlo krivo
 const diag = (env, k, o) => env.DB.prepare('INSERT OR REPLACE INTO diag (k, v, t) VALUES (?, ?, ?)').bind(k, JSON.stringify(o).slice(0, 1500), Date.now()).run().catch(() => {});
 // AI (v0.22): ključ je tajna ANTHROPIC_API_KEY na Workeru; preglednik ga nikad ne vidi. Model i mjesečni limit po korisniku

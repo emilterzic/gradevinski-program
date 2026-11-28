@@ -1,4 +1,4 @@
-// BIS program – v0.25
+// BIS program – v0.26
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -1578,12 +1578,33 @@ function show3dEmpty(on) {
 
 /* ---------- AI: 3D model iz nacrta (tlocrt → obris; presjek i pročelja → visine, krov, otvori) ---------- */
 function jsonFrom(text) { const a = text.indexOf('{'), b = text.lastIndexOf('}'); if (a < 0 || b <= a) throw new Error('AI nije vratio podatke.'); return JSON.parse(text.slice(a, b + 1)); }
-async function askJson(prompt, images, tier) {
+// Odrezan JSON (odgovor prekinut na granici duljine): zadržava sve do zadnjeg cijelog elementa i zatvara otvorene zagrade.
+// Vraća null ako se nema što spasiti. Rezultat može biti nepotpun: tko ga koristi mora to napisati korisniku.
+function jsonSalvage(text) {
+  const a = String(text || '').indexOf('{'); if (a < 0) return null;
+  const st = []; let inS = false, bs = false, cut = -1, cutSt = null;
+  for (let i = a; i < text.length; i++) {
+    const c = text[i];
+    if (inS) { if (bs) bs = false; else if (c === '\\') bs = true; else if (c === '"') inS = false; continue; }
+    if (c === '"') inS = true;
+    else if (c === '{' || c === '[') st.push(c);
+    else if (c === '}' || c === ']') { st.pop(); if (!st.length) return null; cut = i + 1; cutSt = st.slice(); }
+  }
+  if (cut < 0) return null;
+  try { return JSON.parse(text.slice(a, cut) + cutSt.reverse().map((c) => (c === '{' ? '}' : ']')).join('')); } catch { return null; }
+}
+// opt.noCont: odrezan odgovor se ne nastavlja nego odmah javlja (pozivatelj će posao podijeliti na manje upite)
+async function askJson(prompt, images, tier, opt = {}) {
   const imgs = (images || []).slice(0, cap.maxImages || 4); // platforma prima najviše 4 slike po upitu
   for (let tryNo = 0; ; tryNo++) {
     try {
-      const r = await cap.sample(prompt + '\n\nOdgovori ISKLJUČIVO jednim JSON objektom, bez teksta prije ili poslije. JSON piši zbijeno: bez uvlaka, bez novih redova i bez suvišnih razmaka; brojeve zaokruži na najviše 3 decimale. Sve napomene piši na hrvatskom jeziku.', { ...(imgs.length ? { images: imgs } : {}), modelTier: tier || 'default', cache: false });
-      return jsonFrom(r.text || '');
+      const r = await cap.sample(prompt + '\n\nOdgovori ISKLJUČIVO jednim JSON objektom, bez teksta prije ili poslije. JSON piši zbijeno: bez uvlaka, bez novih redova i bez suvišnih razmaka; brojeve zaokruži na najviše 3 decimale. Sve napomene piši na hrvatskom jeziku.', { ...(imgs.length ? { images: imgs } : {}), modelTier: tier || 'default', cache: false, ...(opt.noCont ? { noCont: true } : {}) });
+      try { return jsonFrom(r.text || ''); }
+      catch (e) {
+        // nastavljeni odgovor: ako je AI umjesto nastavka napisao sve ispočetka, vrijedi zadnji dio; inače se upit ne ponavlja (bio bi opet predug)
+        if (r.cont) { if (/^\s*(```(json)?\s*)?\{/.test(r.last || '')) { try { return jsonFrom(r.last); } catch {} } throw Object.assign(e, { code: 'too_long', text: r.text }); }
+        throw Object.assign(e, { text: r.text });
+      }
     } catch (e) {
       if (tryNo >= 1 || e?.code === 'not_granted' || e?.code === 'too_long') throw e;
       await new Promise((res) => setTimeout(res, e?.code === 'rate_limited' ? 12000 : 1500));
@@ -1716,11 +1737,13 @@ async function aiBuildModel() {
         if (kr.napomena) katNote.push(String(kr.napomena));
       }
     }
-    // 5/6 otvori: po dva pročelja u upitu; ako jedan upit ne uspije, model se ipak složi bez tih otvora
-    memo.facs ||= {}; const failed = [], per = Math.max(1, Math.min(2, MAXI - 1));
-    for (let i = 0; i < elev.length; i += per) {
-      const g = elev.slice(i, i + per), key = g.join('-');
-      if (memo.facs[key]) continue;
+    // 5/6 otvori: po dva pročelja u upitu
+    memo.facs ||= {}; const failed = [], partial = [], per = Math.max(1, Math.min(2, MAXI - 1));
+    // Skupine pročelja čitaju se istovremeno. Ako odgovor za skupinu ne uspije (npr. predug popis otvora pa je odrezan),
+    // svako pročelje te skupine čita se ponovno samo za sebe, da nijedno ne ostane bez otvora zbog duljine odgovora.
+    const readFac = async (g) => {
+      const key = g.join('-');
+      if (memo.facs[key]) return;
       say(`5/6: čitam prozore i vrata s pročelja (str. ${g.join(', ')})…`);
       try {
         const imgs = [crop], desc = [`Slika 1: izrez tlocrta (str. ${tp}).`];
@@ -1733,13 +1756,23 @@ async function aiBuildModel() {
           } catch (e) { if (e?.code === 'not_granted') throw e; console.warn(e); g.forEach((n) => { memo.ebox[n] ||= [0, 0, 1, 1]; }); }
         }
         for (const n of g) { imgs.push(memo['ecrop' + n] ||= await pageCropBlob(n, memo.ebox[n])); desc.push(pdesc(n, imgs.length, 'pročelje')); }
-        const fr2 = await askJson(`Slažem 3D model zgrade: tlocrt podnožja ${fq(W)} × ${fq(D)} m. Dijelovi odozdo prema gore: ${partsTxt}.\n${desc.join('\n')}\n\nZa svako pročelje na slikama od 2 nadalje vrati {"procelja": [{"slika": broj slike, "naziv": naziv pročelja s nacrta, "strana": koju stranu tlocrta sa slike 1 to pročelje prikazuje: "gore" | "desno" | "dolje" | "lijevo", "balkona": broj balkona ili lođa s ogradom vidljivih na tom pročelju (0 ako ih nema), "rubovi": [x lijevog ruba zgrade, x desnog ruba zgrade] u razini terena kao udjeli širine TE SLIKE (0–1), "visinaPodnozja": visina vrha najdonjeg dijela zgrade (kod zgrade iz jednog dijela: vrha zida) iznad NAJNIŽE točke terena uz to pročelje, u m (iz visinskih kota ili mjerila), "gornji": [{"dio": redni broj dijela zgrade (2 = prvi dio iznad podnožja), "x0": lijevi rub tog dijela, "x1": desni rub tog dijela}] u udjelima širine pročelja kao x kod otvora (prazno ako zgrada ima jedan dio ili se gornji dio na tom pročelju ne vidi), "otvori": [{"x": položaj sredine otvora po širini TOG pročelja 0–1 (0 = lijevi rub zgrade, 1 = desni rub zgrade, kako je nacrtano), "parapet": visina donjeg ruba otvora od ±0,00 u m (za gornje etaže to je veliki broj, npr. +12,30), "sirina": m, "visina": m, "vrsta": "prozor" | "vrata" | "klizna"}]}], "napomena": "kratko"}.\nŠirina pročelja (x od 0 do 1) uvijek je cijela širina PODNOŽJA, i za prozore na uvučenim gornjim etažama. Izlozi i ostakljene stijene poslovnog prizemlja su "klizna" sa stvarnom širinom i visinom. Ako je na jednoj slici više pročelja, vrati svako kao zaseban zapis. Prije odgovora prebroji otvore na svakoj etaži i provjeri da su svi navedeni. Navedi sve prozore i vrata koje vidiš, svaku etažu posebno (balkonska vrata su "klizna" ako su šira od 1,6 m, inače "vrata"). Stranu odredi po nazivu pročelja (sjever/jug/istok/zapad uz oznaku sjevera na tlocrtu) ili po obliku zgrade.`, imgs, 'complex');
+        const ask = () => askJson(`Slažem 3D model zgrade: tlocrt podnožja ${fq(W)} × ${fq(D)} m. Dijelovi odozdo prema gore: ${partsTxt}.\n${desc.join('\n')}\n\nZa svako pročelje na slikama od 2 nadalje vrati {"procelja": [{"slika": broj slike, "naziv": naziv pročelja s nacrta, "strana": koju stranu tlocrta sa slike 1 to pročelje prikazuje: "gore" | "desno" | "dolje" | "lijevo", "balkona": broj balkona ili lođa s ogradom vidljivih na tom pročelju (0 ako ih nema), "rubovi": [x lijevog ruba zgrade, x desnog ruba zgrade] u razini terena kao udjeli širine TE SLIKE (0–1), "visinaPodnozja": visina vrha najdonjeg dijela zgrade (kod zgrade iz jednog dijela: vrha zida) iznad NAJNIŽE točke terena uz to pročelje, u m (iz visinskih kota ili mjerila), "gornji": [{"dio": redni broj dijela zgrade (2 = prvi dio iznad podnožja), "x0": lijevi rub tog dijela, "x1": desni rub tog dijela}] u udjelima širine pročelja kao x kod otvora (prazno ako zgrada ima jedan dio ili se gornji dio na tom pročelju ne vidi), "otvori": [{"x": položaj sredine otvora po širini TOG pročelja 0–1 (0 = lijevi rub zgrade, 1 = desni rub zgrade, kako je nacrtano), "parapet": visina donjeg ruba otvora od ±0,00 u m (za gornje etaže to je veliki broj, npr. +12,30), "sirina": m, "visina": m, "vrsta": "prozor" | "vrata" | "klizna"}]}], "napomena": "kratko"}.\nŠirina pročelja (x od 0 do 1) uvijek je cijela širina PODNOŽJA, i za prozore na uvučenim gornjim etažama. Izlozi i ostakljene stijene poslovnog prizemlja su "klizna" sa stvarnom širinom i visinom. Ako je na jednoj slici više pročelja, vrati svako kao zaseban zapis. Prije odgovora prebroji otvore na svakoj etaži i provjeri da su svi navedeni. Navedi sve prozore i vrata koje vidiš, svaku etažu posebno (balkonska vrata su "klizna" ako su šira od 1,6 m, inače "vrata"). Stranu odredi po nazivu pročelja (sjever/jug/istok/zapad uz oznaku sjevera na tlocrtu) ili po obliku zgrade.`, imgs, 'complex', { noCont: g.length > 1 });
+        // jedno pročelje čiji je odgovor ipak ostao odrezan: zadržavaju se svi otvori pročitani do prekida, uz jasnu napomenu
+        let fr2, part = false;
+        try { fr2 = await ask(); }
+        catch (e) { const sv = g.length === 1 && e?.code !== 'not_granted' ? jsonSalvage(e?.text) : null; if (!sv || !Array.isArray(sv.procelja) || !sv.procelja.some((f) => Array.isArray(f.otvori) && f.otvori.length)) throw e; fr2 = sv; part = true; }
         const list = Array.isArray(fr2.procelja) ? fr2.procelja : [];
         // nacrtana širina pročelja u metrima (iz rubova na slici i mjerila stranice): razlikuje dulju od kraće strane zgrade
         list.forEach((f) => { const n = g[(Math.round(+f.slika) || 2) - 2] ?? g[0], mp = scaleOf(n), rb = Array.isArray(f.rubovi) ? f.rubovi.map(Number) : []; f.sirina_m = mp && rb.length === 2 && rb[1] - rb[0] > 0.05 && rb[1] <= 1.01 ? r2((rb[1] - rb[0]) * (memo.ebox[n][2] - memo.ebox[n][0]) * pageInfo[n].w * mp) : null; });
-        memo.facs[key] = { list, note: fr2.napomena };
-      } catch (e) { if (e?.code === 'not_granted') throw e; console.warn(e); failed.push(...g); }
-    }
+        memo.facs[key] = { list, note: part ? `popis otvora sa str. ${g[0]} bio je predug i prekinut je: zadnji otvori na tom pročelju možda nedostaju (provjeri)` : fr2.napomena };
+        if (part) partial.push(...g);
+      } catch (e) {
+        if (e?.code === 'not_granted') throw e; console.warn(e);
+        if (g.length > 1) { say(`Popis otvora sa str. ${g.join(', ')} nije stao u jedan odgovor: čitam svako pročelje posebno…`); for (const n of g) await readFac([n]); }
+        else failed.push(...g);
+      }
+    };
+    { const groups = []; for (let i = 0; i < elev.length; i += per) groups.push(elev.slice(i, i + per)); await pool(3, groups.map((g) => () => readFac(g))); }
     hv.procelja = Object.values(memo.facs).flatMap((f) => f.list);
     hv.napomene = [...(Array.isArray(hv.napomene) ? hv.napomene : []), ...katNote, ...Object.values(memo.facs).map((f) => f.note).filter(Boolean), ...(failed.length ? [`otvore sa str. ${failed.join(', ')} nisam uspio pročitati (pokreni ponovno za dopunu)`] : [])];
     say('6/6: slažem model…');
@@ -1781,9 +1814,9 @@ async function aiBuildModel() {
     const partLines = spec.parts.map((p, i) => `  ${i + 1}. ${p.name}: ${p.floors} ${p.floors === 1 ? 'etaža' : p.floors < 5 ? 'etaže' : 'etaža'}, visine ${p.heights.map((h) => fq(h)).join(' / ')} m${p.shape ? `, tlocrt s ${p.shape.length} uglova` : ''}${p.balconies?.length ? `, balkona na etaži: ${p.balconies.length} (${[...new Set(p.balconies.map((b) => b.rail === 'staklo' ? 'staklena ograda' : b.rail === 'metal' ? 'metalna ograda' : 'zidana ograda'))].join(', ')})` : ''}${p.inset ? `, uvučeno gore ${fq(p.inset.g)} · desno ${fq(p.inset.d)} · dolje ${fq(p.inset.dl)} · lijevo ${fq(p.inset.l)} m` : ''}`).join('\n');
     // kontrola potpunosti: što je pročitano, a što je završilo u modelu
     const nRead = spec.facades.reduce((a, f) => a + f.openings.length, 0), nDrop = MD.specStats(spec).dropped, bSeen = Math.max(0, ...hv.procelja.map((f) => num(f.balkona) || 0)), bMod = spec.parts.reduce((a, q) => a + (q.balconies?.length || 0), 0);
-    const warn = [spec.facades.length && spec.facades.length < 4 ? `pročitana su samo ${spec.facades.length} pročelja od 4` : '', nDrop ? `${nDrop} pročitanih otvora nije našlo zid u modelu` : '', bSeen > 0 && !bMod ? `na pročeljima su vidljivi balkoni (do ${bSeen} na jednom pročelju), a u model nisu ušli: dodaj ih u Objekt i dimenzije ili ponovi čitanje` : ''].filter(Boolean);
+    const warn = [failed.length ? `OTVORI SA STR. ${failed.join(', ')} NISU PROČITANI: pokreni čitanje nacrta ponovno (čitat će se samo ta pročelja)` : '', partial.length ? `popis otvora sa str. ${partial.join(', ')} je nepotpun` : '', elev.length && !failed.length && !nRead ? 'na pročeljima nije pročitan nijedan prozor ni vrata: provjeri jesu li odabrane prave stranice pročelja' : '', spec.facades.length && spec.facades.length < 4 ? `pročitana su samo ${spec.facades.length} pročelja od 4` : '', nDrop ? `${nDrop} pročitanih otvora nije našlo zid u modelu` : '', bSeen > 0 && !bMod ? `na pročeljima su vidljivi balkoni (do ${bSeen} na jednom pročelju), a u model nisu ušli: dodaj ih u Objekt i dimenzije ili ponovi čitanje` : ''].filter(Boolean);
     const kontrola = `• kontrola: pročelja ${spec.facades.length}/4, otvora pročitano ${nRead}, balkona u modelu ${bMod}${warn.length ? '\n• PROVJERI: ' + warn.join('; ') : ''}\n`;
-    addMsg('assistant', `3D model je složen iz nacrta (AI prijedlog, provjeri ga):\n• tlocrt podnožja ${fq(d.W)} × ${fq(d.D)} m, ${base.fp.length} uglova (str. ${tp})\n• ${spec.parts.length > 1 ? 'dijelovi zgrade' : 'zgrada'} (ukupno ${MD.etaze(d.floors)}, visina ${fq(r2(MD.topOf(P.model)))} m):\n${partLines}\n• krov: ${MD.optOf('krovOblik', spec.roof).n.toLowerCase()}; ${spec.facades.length ? '' : 'u dokumentu nema pročelja, pa prozori i vrata nisu ucrtani (dodaj dokument s pročeljima i pokreni ponovno); '}${nOps} otvora s pročelja (${spec.facades.map((f) => `${String(f.name || 'pročelje').replace(/\s*PROČELJE\s*/i, '').toLowerCase() || 'pročelje'} = ${f.side}`).join(', ')})\n${res.notes.length ? '• usklađivanje nacrta: ' + res.notes.join('; ') + '\n' : ''}${kontrola}• pouzdanost oko ${conf} %${tall ? '\n• izvedbu sam postavio na armirani beton i temeljnu ploču (zidana ne prolazi osnovna pravila za ovu visinu); promijeni ako projekt kaže drukčije' : ''}${notes.length ? '\nNapomene: ' + notes.slice(0, 5).join(' · ') : ''}\n\nSvaki dio (etaže, visine, uvlake, balkone), strane pročelja i ukupne mjere ispravi u 3D prikaz → Izvedba i cijene → Objekt i dimenzije.`);
+    addMsg('assistant', `3D model je složen iz nacrta (AI prijedlog, provjeri ga):\n• tlocrt podnožja ${fq(d.W)} × ${fq(d.D)} m, ${base.fp.length} uglova (str. ${tp})\n• ${spec.parts.length > 1 ? 'dijelovi zgrade' : 'zgrada'} (ukupno ${MD.etaze(d.floors)}, visina ${fq(r2(MD.topOf(P.model)))} m):\n${partLines}\n• krov: ${MD.optOf('krovOblik', spec.roof).n.toLowerCase()}; ${spec.facades.length ? '' : elev.length ? `pročelja (str. ${elev.join(', ')}) nisu pročitana, pa prozori i vrata nisu ucrtani: pokreni čitanje nacrta ponovno; ` : 'u dokumentu nema pročelja, pa prozori i vrata nisu ucrtani (dodaj dokument s pročeljima i pokreni ponovno); '}${nOps} otvora s pročelja (${spec.facades.map((f) => `${String(f.name || 'pročelje').replace(/\s*PROČELJE\s*/i, '').toLowerCase() || 'pročelje'} = ${f.side}`).join(', ')})\n${res.notes.length ? '• usklađivanje nacrta: ' + res.notes.join('; ') + '\n' : ''}${kontrola}• pouzdanost oko ${conf} %${tall ? '\n• izvedbu sam postavio na armirani beton i temeljnu ploču (zidana ne prolazi osnovna pravila za ovu visinu); promijeni ako projekt kaže drukčije' : ''}${notes.length ? '\nNapomene: ' + notes.slice(0, 5).join(' · ') : ''}\n\nSvaki dio (etaže, visine, uvlake, balkone), strane pročelja i ukupne mjere ispravi u 3D prikaz → Izvedba i cijene → Objekt i dimenzije.`);
     aiReadLog({ ok: true, msg: P.chat[P.chat.length - 1]?.content || '', parts: spec.parts, sides: spec.facades.map((f) => ({ n: f.name, side: f.side, ai: f.sideAi, w: f.width, up: f.upper, ops: f.openings.length })), kat: memo.kat?.r || null, katBox: memo.kat?.box || null, fp: spec.fp, vols: MD.volsOf(P.model).map((v) => ({ fp: v.fp, ops: v.openings.length, bk: (v.balconies || []).length })) });
     if (!failed.length) delete aiMemo[P.docId];
     showView('3d');
@@ -2252,7 +2285,7 @@ async function onJsonFile(file) {
 // Kad program ne radi unutar claude.ai, a poslužitelj poznaje prijavljenog korisnika (/api/me), podaci se spremaju
 // po korisniku na poslužitelj. Sučelje je isto kao cap.db/cap.assets/cap.dl/cap.dict pa ostatak programa ne zna razliku.
 let WEB = null;
-const APP_V = '0.25'; // ista vrijednost kao APP_V u server/worker.js
+const APP_V = '0.26'; // ista vrijednost kao APP_V u server/worker.js
 // Otvorena kartica ne smije ostati na staroj inačici: kad poslužitelj javi noviju, program spremi rad i sam se osvježi.
 // Isto tako, ako je AI u međuvremenu uključen na poslužitelju, uključuje se i ovdje bez ponovne prijave.
 let webChecking = false;
@@ -2305,24 +2338,31 @@ async function webCaps() {
       const messages = (typeof input === 'string' ? [{ role: 'user', content: input }] : input).map((m) => ({ role: m.role, content: m.content }));
       if (o.images && o.images.length) { const last = messages[messages.length - 1], imgs = []; for (const b of o.images) imgs.push({ type: 'image', source: { type: 'base64', media_type: b.type || 'image/jpeg', data: await b64(b) } }); last.content = [...imgs, { type: 'text', text: last.content }]; }
       const tools = (o.tools || []).map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema || { type: 'object', properties: {} } }));
-      let text = '';
+      let text = '', cont = 0, glue = false, last = '';
       for (let step = 0; step < 14; step++) {
         // „model” mora biti prvi ključ: poslužitelj provjerava samo početak tijela
         const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, signal: o.signal, body: JSON.stringify({ model: me.aiModel, max_tokens: 16000, messages, ...(tools.length ? { tools } : {}) }) });
         if (r.status === 401) { location.href = '/login'; throw new Error('Prijava je istekla.'); }
         if (!r.ok) { let e = {}; try { e = await r.json(); } catch {} throw Object.assign(new Error(e.error || 'AI trenutno nije dostupan.'), { code: r.status === 429 ? 'rate_limited' : r.status === 402 || r.status === 503 ? 'not_granted' : 'error', text }); }
         const res = await r.json(), parts = res.content || [], t = parts.filter((c) => c.type === 'text').map((c) => c.text).join('');
-        if (t) { text += (text ? '\n' : '') + t; if (o.onText) o.onText({ text }); }
+        if (t) { text += (text && !glue ? '\n' : '') + t; last = t; if (o.onText) o.onText({ text }); }
+        glue = false;
         const uses = parts.filter((c) => c.type === 'tool_use');
-        // odgovor odrezan na granici duljine: bolje jasna greška nego pola JSON-a
-        if (res.stop_reason === 'max_tokens' && !uses.length) throw Object.assign(new Error('Odgovor AI-ja je predug i odrezan je.'), { code: 'too_long', text });
+        // Odgovor prekinut na granici duljine: AI ga nastavlja od mjesta prekida (najviše 3 puta), pa se dijelovi spajaju.
+        // Tek ako ni to nije dovoljno (ili pozivatelj ne želi nastavak), javlja se jasna greška umjesto pola odgovora.
+        if (res.stop_reason === 'max_tokens' && !uses.length) {
+          if (o.noCont || cont >= 3 || !t) throw Object.assign(new Error('Odgovor AI-ja je predug i odrezan je.'), { code: 'too_long', text });
+          cont++; glue = true;
+          messages.push({ role: 'assistant', content: t }, { role: 'user', content: 'Tvoj je odgovor prekinut na granici duljine. Nastavi TOČNO od znaka na kojem je stao: prvi znak tvog odgovora mora biti sljedeći znak prekinutog teksta. Ne ponavljaj ništa što je već napisano i ne dodaji uvod, objašnjenje ni oznake koda.' });
+          continue;
+        }
         if (res.stop_reason !== 'tool_use' || !uses.length) break;
         messages.push({ role: 'assistant', content: parts });
         const out = [];
         for (const u of uses) { const tool = (o.tools || []).find((x) => x.name === u.name); let v, bad = false; try { if (!tool) throw new Error('Nepoznat alat'); v = await tool.execute(u.input || {}); } catch (e) { v = String(e && e.message ? e.message : e); bad = true; } out.push({ type: 'tool_result', tool_use_id: u.id, content: typeof v === 'string' ? v : JSON.stringify(v === undefined ? 'ok' : v), ...(bad ? { is_error: true } : {}) }); }
         messages.push({ role: 'user', content: out });
       }
-      return { text };
+      return { text, cont, last };
     };
     cap.imagesOk = true; cap.maxImages = 4; $('#aiState').textContent = '';
   } else $('#aiState').textContent = 'uskoro';

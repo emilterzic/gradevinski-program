@@ -116,3 +116,12 @@
   `analyzeAllPages` analizira prvu stranicu odmah, ostale u pozadini; tko treba sve stranice čeka `pagesReady`.
 - AI na webu ide preko posrednika `bridgeline-agent-proxy` (servisna veza `AI_PROXY`, licenca iz `PROXY_DB`, klijent „BIS program”);
   vlastita tajna `ANTHROPIC_API_KEY` nije potrebna, a ako postoji ima prednost. Administrator nema korisnički mjesečni limit.
+- Inačica i dijagnostika (v0.24–v0.25): `APP_V` je u `web/app.js` i `server/worker.js` (mijenjati oba); `webCheck()` sam osvježi karticu
+  kad poslužitelj ima noviju inačicu ili kad AI postane dostupan (ne dok `aiModelBusy` ili `busy`). Tablica `diag (k, v, t)`:
+  `me`, `ai_ok` (model, tokeni), `ai_greska`: uživo se provjerava kroz nju i `ailog_<projekt>`, ne kroz snimke zaslona.
+- Odrezani odgovori (v0.26): AI servis traži najveću duljinu odgovora (`max_tokens`, 16 000). `cap.sample` na webu odrezan odgovor
+  (`stop_reason: max_tokens`) sam nastavlja do 3 puta i vraća `{text, cont, last}`; `askJson(prompt, slike, tier, {noCont})`.
+  Pročelja se čitaju po dva u upitu, usporedno (`pool`); odrezana skupina se dijeli na pojedina pročelja, a jedno pročelje koje ni
+  s nastavcima ne stane spašava se s `jsonSalvage` (otvori do prekida) uz napomenu „nepotpun”. Model se NIKAD ne slaže šutke bez
+  otvora: `failed`/`partial` idu u red „PROVJERI”. Provjera: `BIS_MOCK_AI=rez node tests/dev-server.mjs` (i `BIS_MOCK_REZ=uvijek`),
+  popis upita na `/__mock`. Svaki novi dugi popis iz AI-ja (stavke, pozicije) mora imati isti put: podjela, nastavak, spašavanje.

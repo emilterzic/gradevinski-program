@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: v0.21 (studeni 2026.)
+## Stanje: v0.26 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -59,6 +59,12 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   izdvajanje etaže, presjek (uzdužni, poprečni, vodoravni) s klizačem, prozirni prikaz, svojstva kliknutog elementa
   (prozor, vrata, zid, balkon: mjere, etaža, pročelje, izvedba) uz stavke troškovnika. AI sažetak ima red „kontrola”
   (pročelja n/4, otvori pročitani i bez zida, balkoni viđeni na pročeljima a nisu u modelu).
+- **Čitanje nacrta bez odrezanih odgovora** (v0.26): AI servis ograničava duljinu jednog odgovora; program odrezan odgovor
+  sam nastavlja, dugačke popise otvora dijeli po pročeljima i čita ih usporedno, a u najgorem slučaju zadržava sve
+  pročitano do prekida i to jasno napiše. Model se više ne može složiti šutke bez prozora i vrata.
+- **Novi nacrt = novi objekt, AI na webu** (v0.22–v0.25): AI ide kroz postojeći posrednik (bez ključa u programu), nacrt se
+  prikazuje odmah iz memorije, učitani nacrt otvara novi projekt i odmah se čita u 3D model, kartica se sama osvježi
+  na novu inačicu.
 - **Web inačica s prijavom** (v0.21): program se na Cloudflareu poslužuje kroz Worker (`server/worker.js`) koji prije
   svega traži prijavu korisničkim imenom i lozinkom. Korisnici, sesije, projekti i nacrti su u bazi D1, odvojeni po
   korisniku. Administrator na `/admin` dodaje korisnike, bira vrste programa, produljuje valjanost (+1 mjesec) i
