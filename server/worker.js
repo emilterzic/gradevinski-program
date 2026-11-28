@@ -6,7 +6,7 @@ import { LOGIN_HTML, ADMIN_HTML, SETUP_HTML } from './pages.js';
 const SESSION_DAYS = 30, COOKIE = 'bis_s', DOC_CHUNK = 600000, FILE_CHUNK = 1000000, MAX_DOC = 24e6, MAX_FILE_DB = 40e6, MAX_FILE_R2 = 200e6;
 const MODES = ['gradnja', 'krov', 'zemlja', 'stolarija'];
 // Inačica programa: ista vrijednost stoji u web/app.js (APP_V). Kad se razlikuju, otvorena kartica se sama osvježi.
-export const APP_V = '0.26';
+export const APP_V = '0.27';
 // kratki dijagnostički zapis u bazi (bez osobnih podataka osim korisničkog imena): što poslužitelj vidi i što je zadnje pošlo krivo
 const diag = (env, k, o) => env.DB.prepare('INSERT OR REPLACE INTO diag (k, v, t) VALUES (?, ?, ?)').bind(k, JSON.stringify(o).slice(0, 1500), Date.now()).run().catch(() => {});
 // AI (v0.22): ključ je tajna ANTHROPIC_API_KEY na Workeru; preglednik ga nikad ne vidi. Model i mjesečni limit po korisniku
@@ -130,6 +130,9 @@ async function admin(request, env, path, me) {
 // AI: zahtjev iz preglednika prosljeđuje se AI servisu bez raspakiravanja (tijelo sa slikama nacrta može imati više MB,
 // a besplatni plan dopušta malo procesorskog vremena). Provjerava se samo početak tijela: model mora biti dopušteni.
 async function ai(request, env, me) {
+  // Kartica otvorena prije nadogradnje (stari kod u pregledniku, bez oznake inačice) ne smije dalje raditi po starom:
+  // odgovor 401 je u svim inačicama programa znak za ponovno učitavanje stranice, a prijava ostaje valjana.
+  if (!request.headers.get('x-app-v')) { await diag(env, 'stari_klijent', { korisnik: me.username }); return err('Program je nadograđen. Stranica se učitava ponovno.', 401); }
   if (!aiOn(env)) return err('AI na ovoj adresi još nije uključen.', 503);
   const model = aiModel(env), mo = month();
   const spent = await env.DB.prepare('SELECT cost_usd FROM ai_month WHERE user_id = ? AND month = ?').bind(me.id, mo).first();

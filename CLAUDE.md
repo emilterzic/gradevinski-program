@@ -125,3 +125,6 @@
   s nastavcima ne stane spašava se s `jsonSalvage` (otvori do prekida) uz napomenu „nepotpun”. Model se NIKAD ne slaže šutke bez
   otvora: `failed`/`partial` idu u red „PROVJERI”. Provjera: `BIS_MOCK_AI=rez node tests/dev-server.mjs` (i `BIS_MOCK_REZ=uvijek`),
   popis upita na `/__mock`. Svaki novi dugi popis iz AI-ja (stavke, pozicije) mora imati isti put: podjela, nastavak, spašavanje.
+- Stare kartice (v0.27): `/api/ai` traži zaglavlje `x-app-v`; bez njega vraća 401, što svaka inačica klijenta pretvara u ponovno
+  učitavanje stranice (`/login` prijavljenog vraća u program). Razlog: kartica s inačicom 0.23 nije imala `webCheck()` pa je i
+  nakon popravaka čitala nacrt starim kodom. Svaki novi poziv prema `/api/ai` mora slati `x-app-v`.

@@ -8,8 +8,8 @@ import { makeEnv } from './d1shim.mjs';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..'), env = makeEnv(join(root, 'server/schema.sql'), join(root, 'web'));
 const key = (u, p) => createHash('sha256').update(u.toLowerCase() + '|' + p).digest('hex'); // u testu zamjena za rastezanje u pregledniku
 const O = 'https://bis.test';
-async function call(path, { method = 'GET', body, cookie, origin, accept, raw, ip } = {}) {
-  const h = { accept: accept || 'application/json' }; if (cookie) h.cookie = cookie; if (origin) h.origin = origin; if (ip) h['cf-connecting-ip'] = ip;
+async function call(path, { method = 'GET', body, cookie, origin, accept, raw, ip, appV } = {}) {
+  const h = { accept: accept || 'application/json' }; if (appV) h['x-app-v'] = appV; if (cookie) h.cookie = cookie; if (origin) h.origin = origin; if (ip) h['cf-connecting-ip'] = ip;
   if (body !== undefined && !raw) h['content-type'] = 'application/json';
   const r = await worker.fetch(new Request(O + path, { method, headers: h, body: raw ? body : body !== undefined ? JSON.stringify(body) : undefined, redirect: 'manual' }), env);
   const sc = r.headers.get('set-cookie'); return { status: r.status, loc: r.headers.get('location'), cookie: sc ? sc.split(';')[0] : null, r, json: async () => r.json() };
@@ -95,7 +95,7 @@ assert.equal((await del(id)).status, 404); assert.ok(anaId);
 assert.equal((await mk('krov@firma.hr')).status, 200, 'isto korisničko ime se može ponovno otvoriti');
 // 9. AI: bez ključa isključen; s ključem prosljeđuje, bilježi potrošnju i poštuje limit
 const aiBody = (model = 'claude-sonnet-5-5') => JSON.stringify({ model, max_tokens: 100, messages: [{ role: 'user', content: 'bok' }] });
-const aiCall = (c, b = aiBody()) => call('/api/ai', { method: 'POST', cookie: c, body: b, raw: true });
+const aiCall = (c, b = aiBody()) => call('/api/ai', { method: 'POST', cookie: c, body: b, raw: true, appV: '0.27' });
 const N = (await login('krov@firma.hr', 'lozinka123')).cookie;
 assert.equal((await (await call('/api/me', { cookie: N })).json()).ai, false); assert.equal((await aiCall(N)).status, 503);
 env.ANTHROPIC_API_KEY = 'tajna-za-test'; const realFetch = globalThis.fetch; let seenReq = null, upStatus = 200;
@@ -121,4 +121,7 @@ t = await aiCall(N); assert.equal(t.status, 200); assert.equal((await t.json()).
 assert.equal(px.lic, 'bis_licenca_iz_baze'); assert.equal(px.model, 'claude-sonnet-5-5'); assert.equal(px.q, 'bis-krov@firma.hr'); assert.equal(px.len, aiBody().length); assert.match(px.u, /\/v1\/messages$/);
 pxStatus = 502; t = await aiCall(N); assert.equal(t.status, 502); assert.match((await t.json()).error, /nema_kredita/);
 t = await aiCall(A); assert.equal(t.status, 502, 'administrator nema korisnički limit, ali vidi istu poruku');
+// kartica sa starim kodom (bez oznake inačice): 401 = ponovno učitavanje; prijava ostaje valjana pa /login vraća u program
+pxStatus = 200; t = await call('/api/ai', { method: 'POST', cookie: N, body: aiBody(), raw: true }); assert.equal(t.status, 401); assert.match((await t.json()).error, /nadograđen/);
+t = await call('/login', { cookie: N, accept: 'text/html' }); assert.equal(t.status, 302); assert.ok(t.loc.endsWith('/'), 'prijavljeni korisnik se s /login vraća u program');
 console.log('poslužitelj: sve provjere prolaze');

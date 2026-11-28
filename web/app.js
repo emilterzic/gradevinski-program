@@ -1,4 +1,4 @@
-// BIS program – v0.26
+// BIS program – v0.27
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -2285,7 +2285,7 @@ async function onJsonFile(file) {
 // Kad program ne radi unutar claude.ai, a poslužitelj poznaje prijavljenog korisnika (/api/me), podaci se spremaju
 // po korisniku na poslužitelj. Sučelje je isto kao cap.db/cap.assets/cap.dl/cap.dict pa ostatak programa ne zna razliku.
 let WEB = null;
-const APP_V = '0.26'; // ista vrijednost kao APP_V u server/worker.js
+const APP_V = '0.27'; // ista vrijednost kao APP_V u server/worker.js
 // Otvorena kartica ne smije ostati na staroj inačici: kad poslužitelj javi noviju, program spremi rad i sam se osvježi.
 // Isto tako, ako je AI u međuvremenu uključen na poslužitelju, uključuje se i ovdje bez ponovne prijave.
 let webChecking = false;
@@ -2341,7 +2341,7 @@ async function webCaps() {
       let text = '', cont = 0, glue = false, last = '';
       for (let step = 0; step < 14; step++) {
         // „model” mora biti prvi ključ: poslužitelj provjerava samo početak tijela
-        const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, signal: o.signal, body: JSON.stringify({ model: me.aiModel, max_tokens: 16000, messages, ...(tools.length ? { tools } : {}) }) });
+        const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json', 'x-app-v': APP_V }, signal: o.signal, body: JSON.stringify({ model: me.aiModel, max_tokens: 16000, messages, ...(tools.length ? { tools } : {}) }) });
         if (r.status === 401) { location.href = '/login'; throw new Error('Prijava je istekla.'); }
         if (!r.ok) { let e = {}; try { e = await r.json(); } catch {} throw Object.assign(new Error(e.error || 'AI trenutno nije dostupan.'), { code: r.status === 429 ? 'rate_limited' : r.status === 402 || r.status === 503 ? 'not_granted' : 'error', text }); }
         const res = await r.json(), parts = res.content || [], t = parts.filter((c) => c.type === 'text').map((c) => c.text).join('');
