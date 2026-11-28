@@ -128,3 +128,13 @@
 - Stare kartice (v0.27): `/api/ai` traži zaglavlje `x-app-v`; bez njega vraća 401, što svaka inačica klijenta pretvara u ponovno
   učitavanje stranice (`/login` prijavljenog vraća u program). Razlog: kartica s inačicom 0.23 nije imala `webCheck()` pa je i
   nakon popravaka čitala nacrt starim kodom. Svaki novi poziv prema `/api/ai` mora slati `x-app-v`.
+- Iskop (v0.28): `P.iskop` {d dubina m, rp radni prostor m, n pokos (vodoravno po 1 m dubine), sl debljina šljunka m, zat, dren};
+  mijenja se samo preko `setIskop(patch | null)` (poništavanje, stavke utora `iskop`, 3D). Dubinu uvijek zadaje korisnik
+  (upis, govor preko `dictfinal` + `parseDubina`, alat asistenta `iskop`): nikad je ne pretpostavljati. `MD.pitGeom(m, isk)` računa
+  jamu (dno = tlocrt + rp, vrh = dno + d × n, prizmoidna formula, sraslo stanje) i prateće radove; `MD.buildItems(m, b, isk)` tada
+  daje stavke iskop / odvoz / nasip / zatrpavanje / drenaza (zatrpavanje i drenaža bez kataloške cijene). Rastresitost je jedna:
+  `rastK()` (upisana u ponudi ili iz vrste tla), u model ide kroz `iskopArg()`. 3D: `V.setPit(spec)` (jama u mjerilu, teren s otvorom,
+  kota dubine; vidljivo samo u fazi 0, simbolični iskop `userData.sym` se tada skriva), `v3dBuild()` umjesto `V.build`, pogled
+  `V.view('pit')`. Program računa količine, ne dokazuje stabilnost iskopa (pokos/razupiranje: projekt i zaštita na radu).
+  Test: `node tests/iskop.test.mjs` (pokrenuti prije objave uz ostale).
+- Spremanje (v0.28): `flushSave()` sprema odmah kad se kartica sakrije ili zatvori (izmjena tik prije osvježavanja se ne gubi).

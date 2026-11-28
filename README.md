@@ -3,7 +3,7 @@
 Bazni građevinski program za EU: nacrt (PDF/BIM) → izmjera (AI prijedlog + ručno) → troškovnik → ugovor.
 Korisnici: **projektant** (opisi i količine, projektantski troškovnik) i **izvođač** (cijene, ponuda, ugovor).
 
-## Stanje: v0.26 (studeni 2026.)
+## Stanje: v0.28 (studeni 2026.)
 
 Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
 
@@ -59,6 +59,9 @@ Web aplikacija u mapi `web/` (čisti HTML + JavaScript, bez build koraka):
   izdvajanje etaže, presjek (uzdužni, poprečni, vodoravni) s klizačem, prozirni prikaz, svojstva kliknutog elementa
   (prozor, vrata, zid, balkon: mjere, etaža, pročelje, izvedba) uz stavke troškovnika. AI sažetak ima red „kontrola”
   (pročelja n/4, otvori pročitani i bez zida, balkoni viđeni na pročeljima a nisu u modelu).
+- **Zemljani radovi: iskop po zadanoj dubini** (v0.28): dubina se upiše ili izgovori („1,73”, „metar i pol”, „173 cm”),
+  3D prikaz pokaže građevinsku jamu u mjerilu s kotom dubine, a iskop, odvoz, šljunčani nasip, zatrpavanje i drenaža
+  izračunaju se iz jame (radni prostor, pokos) i upišu u ponudu. Količine su za ponudu, u sraslom stanju.
 - **Čitanje nacrta bez odrezanih odgovora** (v0.26): AI servis ograničava duljinu jednog odgovora; program odrezan odgovor
   sam nastavlja, dugačke popise otvora dijeli po pročeljima i čita ih usporedno, a u najgorem slučaju zadržava sve
   pročitano do prekida i to jasno napiše. Model se više ne može složiti šutke bez prozora i vrata.

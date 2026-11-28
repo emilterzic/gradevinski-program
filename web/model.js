@@ -397,6 +397,31 @@ export function offsetPoly(m, d) {
   const E = edges(m), n = m.fp.length;
   return m.fp.map((v, i) => { const n1 = outward(m, E[(i - 1 + n) % n]), n2 = outward(m, E[i]), k = 1 + n1[0] * n2[0] + n1[1] * n2[1]; return [v[0] + d * (n1[0] + n2[0]) / k, v[1] + d * (n1[1] + n2[1]) / k]; });
 }
+// Građevinska jama (zemljani radovi). Zadaje je korisnik: d = dubina (m), rp = radni prostor oko tlocrta (m),
+// n = pokos (vodoravni pomak stranice po 1 m dubine; 0 = okomite stranice). Dno = tlocrt + radni prostor,
+// vrh = dno prošireno za d × n. Obujam po prizmoidnoj formuli d/6 × (dno + 4 × sredina + vrh), u sraslom stanju.
+// Prateći radovi koje firma uključuje po potrebi: sl = debljina šljunčanog nasipa na dnu (m, 0 = nema),
+// zat = zatrpavanje prostora između objekta i stranica jame, dren = drenaža po opsegu objekta.
+export const ISKOP_LIM = { d: [0.05, 15], rp: [0, 3], n: [0, 2], sl: [0, 2] };
+export function normIskop(x) {
+  if (!x || !(+x.d > 0)) return null;
+  const cl = (v, [a, b], def) => (isFinite(+v) && v !== null && v !== '' ? Math.max(a, Math.min(b, +v)) : def);
+  return { d: Math.round(cl(x.d, ISKOP_LIM.d, 1) * 100) / 100, rp: Math.round(cl(x.rp, ISKOP_LIM.rp, 0.5) * 100) / 100, n: Math.round(cl(x.n, ISKOP_LIM.n, 0) * 100) / 100,
+    sl: Math.round(cl(x.sl, ISKOP_LIM.sl, 0) * 100) / 100, zat: x.zat === undefined ? true : !!x.zat, dren: !!x.dren, ...(+x.rast >= 1 ? { rast: Math.min(2, +x.rast) } : {}) }; // rast: koeficijent rastresitosti koji je upisao korisnik (inače iz vrste tla)
+}
+const polyA = (p) => Math.abs(p.reduce((s, v, i) => { const w = p[(i + 1) % p.length]; return s + v[0] * w[1] - w[0] * v[1]; }, 0)) / 2;
+const polyL = (p) => p.reduce((s, v, i) => { const w = p[(i + 1) % p.length]; return s + Math.hypot(w[0] - v[0], w[1] - v[1]); }, 0);
+export function pitGeom(m, x) {
+  const k = normIskop(x); if (!k || !m || !Array.isArray(m.fp) || m.fp.length < 3) return null;
+  const f = { fp: m.fp }, off = (d) => (d > 0.001 ? offsetPoly(f, d) : m.fp.map((v) => [v[0], v[1]]));
+  const bottom = off(k.rp), top = off(k.rp + k.d * k.n), Ab = polyA(bottom), At = polyA(top), Am = polyA(off(k.rp + k.d * k.n / 2));
+  const A0 = polyA(m.fp), V = k.d / 6 * (Ab + 4 * Am + At), sl = Math.min(k.sl, k.d);
+  // zatrpavanje = jama − prostor koji zauzima objekt (tlocrt × dubina) − šljunak izvan tlocrta; nasip = cijelo dno × debljina
+  const Vzat = Math.max(0, V - A0 * k.d - (Ab - A0) * sl);
+  return { ...k, bottom, top, A0, Ab, At, V, Vsl: Ab * sl, Vzat, Vodvoz: Math.max(0, V - (k.zat ? Vzat : 0)), per0: polyL(m.fp), perB: polyL(bottom), perT: polyL(top), wallA: (polyL(bottom) + polyL(top)) / 2 * Math.hypot(k.d, k.d * k.n) };
+}
+// pokos kao omjer visina : širina (npr. 0,5 → „2:1”), za ispis
+export const pokosTxt = (n) => (!(n > 0) ? 'okomite stranice' : 'pokos ' + (n >= 1 ? '1:' + f2(n).replace(/,00$/, '').replace(/(,\d)0$/, '$1') : f2(1 / n).replace(/,00$/, '').replace(/(,\d)0$/, '$1') + ':1'));
 // odreži poligon: ostaje dio gdje je f(p) <= 0 (f je linearna funkcija)
 function clipFn(poly, f) {
   const out = [];
@@ -601,14 +626,25 @@ export function applyBuild(m, b) {
 }
 
 // Stavke troškovnika koje proizlaze iz odabrane izvedbe. Svaka ima slot + key (da se pri promjeni opcije zamijeni ista stavka).
-export function buildItems(m, b) {
+// isk: zadana građevinska jama (P.iskop) ili ništa; tada iskop slijedi iz vrste temelja.
+export function buildItems(m, b, isk) {
   b = normBuild(b);
   const mm = applyBuild({ ...m }, b), Q = quantities(mm), S = serklazi(mm), out = [];
   const add = (slot, key, group, phase, desc, unit, qty, price, basis, opt) => out.push({ slot, key, group, phase, desc, unit, qty: r2(qty), price, basis, opt });
   // iskop
   const tlo = optOf('tlo', b.tlo), F = foundationQ(mm, b.temelji, Q), oi = b.tlo;
-  add('iskop', 'iskop', 'g02', 'iskop', `${tlo.d} za ${F.za}`, 'm³', F.iskop, tlo.p, F.iskopB, oi);
-  add('iskop', 'odvoz', 'g02', 'iskop', 'Odvoz viška materijala na deponiju', 'm³', F.iskop * tlo.rast, PRICE.odvoz, `Iskop ${f2(F.iskop)} m³ × ${f2(tlo.rast)} (rastresitost).`, oi);
+  const pit = pitGeom(mm, isk);
+  if (pit) {
+    add('iskop', 'iskop', 'g02', 'iskop', `${tlo.d}, široki iskop građevinske jame dubine ${f2(pit.d)} m`, 'm³', pit.V, tlo.p, `Dno jame: tlocrt ${f2(pit.A0)} m²${pit.rp ? ` + radni prostor ${f2(pit.rp)} m uz opseg` : ''} = ${f2(pit.Ab)} m²; ${pokosTxt(pit.n)}${pit.n ? `, vrh jame ${f2(pit.At)} m²` : ''}; dubina ${f2(pit.d)} m. Obujam u sraslom stanju.`, oi);
+    const kr = pit.rast || tlo.rast;
+    add('iskop', 'odvoz', 'g02', 'iskop', 'Odvoz viška materijala na deponiju', 'm³', pit.Vodvoz * kr, PRICE.odvoz, pit.zat && pit.Vzat > 0.005 ? `Iskop ${f2(pit.V)} m³ − ${f2(pit.Vzat)} m³ koji ostaje za zatrpavanje = ${f2(pit.Vodvoz)} m³ × ${f2(kr)} (rastresitost).` : `Iskop ${f2(pit.V)} m³ × ${f2(kr)} (rastresitost).`, oi);
+    if (pit.sl > 0) add('iskop', 'nasip', 'g02', 'iskop', `Nasip i nabijanje šljunka na dnu iskopa d=${Math.round(pit.sl * 100)} cm`, 'm³', pit.Vsl, PRICE.sljunak, `Dno jame ${f2(pit.Ab)} m² × ${f2(pit.sl)} m, u zbijenom stanju.`, oi);
+    if (pit.zat && pit.Vzat > 0.005) add('iskop', 'zatrpavanje', 'g02', 'iskop', 'Zatrpavanje oko objekta materijalom iz iskopa uz nabijanje u slojevima', 'm³', pit.Vzat, null, `Jama ${f2(pit.V)} m³ − objekt ispod terena (tlocrt ${f2(pit.A0)} m² × ${f2(pit.d)} m)${pit.sl > 0 ? ' − šljunak izvan tlocrta' : ''}. Točan obujam ovisi o podrumu i temeljima: provjeri.`, oi);
+    if (pit.dren) add('iskop', 'drenaza', 'g02', 'iskop', 'Drenaža oko temelja: drenažna cijev DN 100, geotekstil, šljunak', 'm', pit.per0, null, `Opseg objekta ${f2(pit.per0)} m.`, oi);
+  } else {
+    add('iskop', 'iskop', 'g02', 'iskop', `${tlo.d} za ${F.za}`, 'm³', F.iskop, tlo.p, F.iskopB, oi);
+    add('iskop', 'odvoz', 'g02', 'iskop', 'Odvoz viška materijala na deponiju', 'm³', F.iskop * tlo.rast, PRICE.odvoz, `Iskop ${f2(F.iskop)} m³ × ${f2(tlo.rast)} (rastresitost).`, oi);
+  }
   // temelji
   const tm = optOf('temelji', b.temelji);
   if (b.temelji === 'ploca') {
@@ -674,7 +710,7 @@ export function buildItems(m, b) {
 // zbroj (količina × okvirna cijena) za zadane slotove
 // (beton nosi i svoju armaturu: procjena ARM_KG kg/m³, da usporedba zidane i AB izvedbe bude poštena)
 export const ARM_KG = 100;
-export function slotCost(m, b, slots) { return buildItems(m, b).filter((i) => slots.includes(i.slot)).reduce((s, i) => s + i.qty * (i.price || 0) + (i.group === 'g03' && i.unit === 'm³' ? i.qty * ARM_KG * PRICE.armatura : 0), 0); }
+export function slotCost(m, b, slots, isk) { return buildItems(m, b, isk).filter((i) => slots.includes(i.slot)).reduce((s, i) => s + i.qty * (i.price || 0) + (i.group === 'g03' && i.unit === 'm³' ? i.qty * ARM_KG * PRICE.armatura : 0), 0); }
 
 /* ---------- informativna provjera statike ---------- */
 // Najmanji udio presjeka nosivih zidova po smjeru (% tlocrtne površine etaže) za „jednostavne zidane zgrade”,

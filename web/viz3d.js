@@ -429,7 +429,7 @@ export class Viz3D {
   // model + odabrana izvedba (temelji, konstrukcija, oblik krova, pokrov, fasada, stolarija)
   build(model, build) {
     this.model = model; this.B = normBuild(build); this.buildKey = BUILD_KEYS.map((k) => this.B[k]).join('|');
-    this.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    this.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.userData && o.material.userData.pit) o.material.dispose(); });
     const shared = new Set(Object.values(this.tex).flatMap((p) => [p.map, p.nrm])); // osnovne teksture se dijele, ne brišu se
     (this.oldMats || []).forEach((mt) => { if (mt.map && !shared.has(mt.map)) mt.map.dispose(); if (mt.normalMap && !shared.has(mt.normalMap)) mt.normalMap.dispose(); mt.dispose(); });
     this.root.clear(); this.parts = [];
@@ -444,7 +444,7 @@ export class Viz3D {
     this.oldMats = Object.values(M).flat();
     seed = 99;
     // teren
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(1500, 128), M.grass); ground.rotation.x = -Math.PI / 2; ground.position.set(cx, -0.01, cz); ground.receiveShadow = true; this.root.add(ground);
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(1500, 128), M.grass); ground.rotation.x = -Math.PI / 2; ground.position.set(cx, -0.01, cz); ground.receiveShadow = true; this.root.add(ground); this.ground = ground; this.groundH = null; this.pitG = null; this.gc = [cx, cz];
     const flatPoly = (poly, y, t, mat, part, s0, s1) => { const g = new THREE.Mesh(new THREE.ExtrudeGeometry(new THREE.Shape(poly.map((p) => new THREE.Vector2(p[0], -p[1]))), { depth: t, bevelEnabled: false }), mat); g.rotation.x = -Math.PI / 2; g.position.y = y - t; return this.add(g, part, s0, s1); };
     const inFp = offsetPoly(m, -0.02); // ploče su 2 cm uvučene, da im rub ne treperi u ravnini zida
     const slab = (y, t, mat, part, s0, s1) => flatPoly(inFp, y, t, mat, part, s0, s1);
@@ -455,10 +455,12 @@ export class Viz3D {
     const posts = postsOf(E);
     const padAt = (p, w, h, y, mat, part, s0, s1) => { const [nx, nz] = outward(m, p.e); const g = this.box(w, h, w, mat, p.e.p[0] + p.e.dx * p.u - nx * 0.2, y, p.e.p[1] + p.e.dz * p.u - nz * 0.2, part, s0, s1); g.rotation.y = -Math.atan2(p.e.dz, p.e.dx); return g; };
     // faza 0: iskop (rovovi, jama za ploču ili jame za samce)
-    this.box(b.x1 - b.x0 + 3, 0.02, b.z1 - b.z0 + 3, M.soil, cx, 0.0, cz, 'iskop', 0, 0);
-    if (B.temelji === 'ploca') flatPoly(offsetPoly(m, 1.0), 0.07, 0.05, M.trench, 'iskop', 0, 0);
-    else { E.forEach((e) => strip(e, B.temelji === 'samci' ? 0.5 : 0.8, 0.05, 0.02, M.trench, 'iskop', 0, 0, 0)); if (B.temelji === 'samci') posts.forEach((p) => padAt(p, 1.6, 0.06, 0.025, M.trench, 'iskop', 0, 0)); }
-    [[b.x1 + 3.0, b.z0 - 1.8, 2.2], [b.x1 + 3.7, b.z0 + 1.0, 1.6]].forEach(([x, z, r]) => { const h = new THREE.Mesh(new THREE.SphereGeometry(r * (B.temelji === 'ploca' ? 1.25 : 1), 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.soil); h.scale.y = 0.45; h.position.set(x, 0, z); this.add(h, 'iskop', 0, 0); });
+    // (simbolični prikaz; kad je zadana građevinska jama, setPit ga skriva i crta stvarnu jamu u mjerilu)
+    const sym = (g) => { g.userData.sym = true; return g; };
+    sym(this.box(b.x1 - b.x0 + 3, 0.02, b.z1 - b.z0 + 3, M.soil, cx, 0.0, cz, 'iskop', 0, 0));
+    if (B.temelji === 'ploca') sym(flatPoly(offsetPoly(m, 1.0), 0.07, 0.05, M.trench, 'iskop', 0, 0));
+    else { E.forEach((e) => sym(strip(e, B.temelji === 'samci' ? 0.5 : 0.8, 0.05, 0.02, M.trench, 'iskop', 0, 0, 0))); if (B.temelji === 'samci') posts.forEach((p) => sym(padAt(p, 1.6, 0.06, 0.025, M.trench, 'iskop', 0, 0))); }
+    [[b.x1 + 3.0, b.z0 - 1.8, 2.2], [b.x1 + 3.7, b.z0 + 1.0, 1.6]].forEach(([x, z, r]) => { const h = new THREE.Mesh(new THREE.SphereGeometry(r * (B.temelji === 'ploca' ? 1.25 : 1), 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.soil); h.scale.y = 0.45; h.position.set(x, 0, z); sym(this.add(h, 'iskop', 0, 0)); });
     // faza 1: temelji
     if (B.temelji === 'ploca') flatPoly(offsetPoly(m, 0.3), 0.149, 0.3, M.concrete, 'temelji', 1, 1);
     else if (B.temelji === 'samci') { posts.forEach((p) => padAt(p, 1.2, 0.4, 0.1, M.concrete, 'temelji', 1, 1)); E.forEach((e) => strip(e, 0.3, 0.3, 0.14, M.concrete, 'temelji', 1, 1, 0.2)); }
@@ -511,6 +513,7 @@ export class Viz3D {
     }
     if (m.canopy) { const K = m.canopy, w = K.x1 - K.x0, d = K.z1 - K.z0; this.box(w, 0.16, d, M.render, K.x0 + w / 2, K.y, K.z0 + d / 2, 'fasada', 2, 9); this.box(w + 0.04, 0.05, d + 0.04, M.metal, K.x0 + w / 2, K.y + 0.1, K.z0 + d / 2, 'limarija', 4, 9); }
     this.landscape(m, b, E, cx, cz);
+    if (this.pitSpec) this.setPit(this.pitSpec, true);
     this.setStage(this.stage); if (this.xray) this.setXray(true);
     if (!this.viewed) { this.view('persp', true); this.viewed = true; } else this.placeSun(this.camera.position, this.controls.target);
     this.invalidateShadows();
@@ -691,7 +694,66 @@ export class Viz3D {
     if (ridge.children.length) this.add(mergeMeshes(ridge), 'krov', 4, 9);
   }
 
-  setStage(s) { this.stage = s; this.parts.forEach((p) => { const u = p.userData; p.visible = s >= u.minStage && s <= u.maxStage; }); this.invalidateShadows(); }
+  setStage(s) {
+    this.stage = s; const pit = !!this.pitG;
+    this.parts.forEach((p) => { const u = p.userData; p.visible = s >= u.minStage && s <= u.maxStage && !(pit && u.sym); });
+    // jama postoji samo u fazi iskopa: tada teren ima otvor, a natpisi dubine su vidljivi
+    if (this.ground) this.ground.visible = !(pit && s === 0); if (this.groundH) this.groundH.visible = pit && s === 0; if (this.pitL) this.pitL.visible = pit && s === 0;
+    this.invalidateShadows();
+  }
+  // Građevinska jama u mjerilu (zemljani radovi). spec: null | { bottom, top (poligoni [x,z] u m), d (dubina u m), fp (tlocrt objekta),
+  // heap (m³ rastresitog materijala za hrpu uz jamu), labels: [tekst uz kotu dubine, tekst na dnu] }.
+  setPit(spec, fromBuild) {
+    const drop = (o) => { if (!o) return; o.parent && o.parent.remove(o); o.traverse((q) => { if (q.geometry) q.geometry.dispose(); if (q.material && q.material.userData.pit) { if (q.material.map && q.material.userData.own) q.material.map.dispose(); q.material.dispose(); } }); };
+    if (!fromBuild) { drop(this.pitG); drop(this.groundH); if (this.pitG) this.parts = this.parts.filter((p) => !p.userData.pit); }
+    drop(this.pitL); this.pitG = this.groundH = this.pitL = null; this.pitSpec = spec || null;
+    if (!spec || !this.model || !this.M) { if (!fromBuild && this.model) this.setStage(this.stage); return; }
+    const M = this.M, d = spec.d, [cx, cz] = this.gc, top = spec.top, bot = spec.bottom, n = top.length;
+    const mat = (base, color) => { const k = base.clone(); k.color.set(color); k.side = THREE.DoubleSide; k.userData = { pit: true }; return k; };
+    const mWall = mat(M.soil, '#d9c7ad'), mBot = mat(M.soil, '#b9a488'), mFp = mat(M.soil, '#efe2cc'), mRim = mat(M.soil, '#ffffff');
+    const G = new THREE.Group();
+    const flat = (poly, y, m2, hole) => { const sh = new THREE.Shape(poly.map((q) => new THREE.Vector2(q[0], -q[1]))); if (hole) sh.holes.push(new THREE.Path(hole.map((q) => new THREE.Vector2(q[0], -q[1])))); const g = new THREE.Mesh(new THREE.ShapeGeometry(sh), m2); g.rotation.x = -Math.PI / 2; g.position.y = y; G.add(g); return g; };
+    flat(bot, -d, mBot); flat(spec.fp, -d + 0.012, mFp);                                   // dno i trag tlocrta objekta na dnu
+    flat(offsetPoly({ fp: top }, 0.7), 0.004, mRim, top);                                    // pojas gole zemlje oko ruba jame
+    // stranice jame: jedna ploha po stranici, teksture u metrima
+    const pos = [], uv = []; let run = 0;
+    for (let i = 0; i < n; i++) {
+      const a = top[i], b2 = top[(i + 1) % n], c = bot[(i + 1) % n], e = bot[i], L = Math.hypot(b2[0] - a[0], b2[1] - a[1]), h = Math.hypot(d, Math.hypot(e[0] - a[0], e[1] - a[1]));
+      pos.push(a[0], 0, a[1], b2[0], 0, b2[1], c[0], -d, c[1], a[0], 0, a[1], c[0], -d, c[1], e[0], -d, e[1]);
+      uv.push(run, 0, run + L, 0, run + L, h, run, 0, run + L, h, run, h); run += L;
+    }
+    const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); wg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); wg.computeVertexNormals();
+    G.add(new THREE.Mesh(wg, mWall));
+    // hrpa iskopanog materijala uz jamu: obujam polukugle spljoštene na 0,45 = zadani rastresiti obujam (najviše do razumne veličine prikaza)
+    if (spec.heap > 0) {
+      const r = Math.min(Math.cbrt(spec.heap / (0.45 * 2 / 3 * Math.PI)), 7), x1 = Math.max(...top.map((q) => q[0])), zc = (Math.min(...top.map((q) => q[1])) + Math.max(...top.map((q) => q[1]))) / 2;
+      const hm = new THREE.MeshStandardMaterial({ color: '#6b4f36', roughness: 1 }); hm.userData = { pit: true };
+      const hg = new THREE.SphereGeometry(r, 40, 18, 0, Math.PI * 2, 0, Math.PI / 2), hpP = hg.attributes.position; // neravna hrpa: šum po vrhovima
+      for (let i = 0; i < hpP.count; i++) { const x = hpP.getX(i), y = hpP.getY(i), z = hpP.getZ(i), k = 1 + 0.07 * SN.noise(x * 0.9, z * 0.9) + 0.04 * SN.noise(x * 2.3 + 7, z * 2.3); hpP.setXYZ(i, x * k, y * k, z * k); } hg.computeVertexNormals();
+      const hp = new THREE.Mesh(hg, hm); hp.scale.y = 0.45; hp.position.set(x1 + r + 2.5, 0, zc); G.add(hp); this.pitX1 = x1 + 2 * r + 2.5;
+    } else this.pitX1 = null;
+    G.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    G.userData = { part: 'iskop', minStage: 0, maxStage: 0, pit: true }; this.root.add(G); this.parts.push(G); this.pitG = G;
+    // teren s otvorom (isti raspored teksture kao puni teren)
+    const R = 1500, sh = new THREE.Shape(); sh.absarc(0, 0, R, 0, Math.PI * 2, false); sh.holes.push(new THREE.Path(top.map((q) => new THREE.Vector2(q[0] - cx, -(q[1] - cz)))));
+    const gg = new THREE.ShapeGeometry(sh, 96), gp = gg.attributes.position, gu = gg.attributes.uv; for (let i = 0; i < gp.count; i++) gu.setXY(i, (gp.getX(i) / R + 1) / 2, (gp.getY(i) / R + 1) / 2);
+    const gh = new THREE.Mesh(gg, M.grass); gh.rotation.x = -Math.PI / 2; gh.position.set(cx, -0.01, cz); gh.receiveShadow = true; this.root.add(gh); this.groundH = gh;
+    // kota dubine: okomita crta s crticama na uglu jame najbližem uobičajenom pogledu + natpisi (uvijek vidljivi)
+    const Lg = new THREE.Group(), k = top.reduce((bi, q, i) => (-q[0] * 0.64 + q[1] * 0.77 > -top[bi][0] * 0.64 + top[bi][1] * 0.77 ? i : bi), 0), c0 = bot[k];
+    const lm = new THREE.LineBasicMaterial({ color: 0xe8590c, depthTest: false }); lm.userData = { pit: true };
+    const t = Math.max(0.15, Math.min(0.5, d * 0.12)), V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+    const ln = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints([V3(c0[0], 0, c0[1]), V3(c0[0], -d, c0[1]), V3(c0[0] - t, 0, c0[1] + t), V3(c0[0] + t, 0, c0[1] - t), V3(c0[0] - t, -d, c0[1] + t), V3(c0[0] + t, -d, c0[1] - t)]), lm); ln.renderOrder = 998; Lg.add(ln);
+    const label = (text, x, y, z, big) => {
+      const cv = document.createElement('canvas'), g2 = cv.getContext('2d'), fs = 44; g2.font = `600 ${fs}px Inter, system-ui, sans-serif`; const w = Math.ceil(g2.measureText(text).width) + 44; cv.width = w; cv.height = 72;
+      g2.font = `600 ${fs}px Inter, system-ui, sans-serif`; g2.fillStyle = big ? '#e8590c' : 'rgba(22,28,36,0.86)'; g2.beginPath(); g2.roundRect(0, 0, w, 72, 16); g2.fill(); g2.fillStyle = '#fff'; g2.textBaseline = 'middle'; g2.fillText(text, 22, 38);
+      const tx = new THREE.CanvasTexture(cv); tx.colorSpace = THREE.SRGBColorSpace; const sm = new THREE.SpriteMaterial({ map: tx, depthTest: false, sizeAttenuation: false }); sm.userData = { pit: true, own: true };
+      const sp = new THREE.Sprite(sm), hgt = big ? 0.034 : 0.028; sp.scale.set(hgt * w / 72, hgt, 1); sp.position.set(x, y, z); if (big) sp.center.set(-0.06, 0.5); sp.renderOrder = 999; Lg.add(sp); // kota dubine stoji desno od crte, da je ne prekrije
+    };
+    const L = spec.labels || []; if (L[0]) label(L[0], c0[0], -d / 2, c0[1], true);
+    if (L[1]) { const bx = bot.reduce((a, q) => a + q[0], 0) / bot.length, bz = bot.reduce((a, q) => a + q[1], 0) / bot.length; label(L[1], bx, -d + 0.05, bz, false); }
+    this.scene.add(Lg); this.pitL = Lg;
+    if (!fromBuild) this.setStage(this.stage);
+  }
   // promjena boje mijenja samo materijale (bez ponovne izgradnje modela)
   setColors(c) { Object.assign(this.model.colors, c); Object.entries(this.byColor).forEach(([k, mats]) => { const v = this.model.colors[k] || DEFAULT_COLORS[k]; mats.forEach((mt) => mt.color.set(v)); }); this.needFull = true; }
   frameBox() { const b = bbox(this.model); return { cx: (b.x0 + b.x1) / 2, cz: (b.z0 + b.z1) / 2, r: Math.max(b.x1 - b.x0, b.z1 - b.z0), h: Math.max(...(this.model.chimneys || []).map((c) => c.top), this.topH) }; }
@@ -704,6 +766,9 @@ export class Viz3D {
       const e = edges(this.model)[kind], [nx, nz] = outward(this.model, e), mx = (e.p[0] + e.q[0]) / 2, mz = (e.p[1] + e.q[1]) / 2;
       const d = fit(Math.max(e.L, f.r) + 2 * this.G.ov, f.h) + 1; tgt.set(mx - nx * 2, eye, mz - nz * 2); pos = new THREE.Vector3(mx + nx * d, eye, mz + nz * d);
     } else if (kind === 'top') { tgt.y = 2; pos = new THREE.Vector3(f.cx - f.r * 1.5, f.r * 3.0, f.cz + f.r * 1.7); }
+    else if (kind === 'pit' && this.pitSpec) { // jama odozgo ukoso, da se vide dno i stranice
+      const tp = this.pitSpec.top, xs = tp.map((q) => q[0]), zs = tp.map((q) => q[1]), x0 = Math.min(...xs), x1 = Math.max(Math.max(...xs), this.pitX1 || -1e9), z0 = Math.min(...zs), z1 = Math.max(...zs), w = Math.max(x1 - x0, z1 - z0), dd = fit(w * 1.4, w * 0.95) + 3;
+      tgt.set((x0 + x1) / 2, -this.pitSpec.d / 2, (z0 + z1) / 2); pos = new THREE.Vector3(tgt.x - 0.5 * dd, 0.62 * dd, tgt.z + 0.6 * dd); }
     else { const d = fit(f.r * 1.45, f.h) + 2; const dir = new THREE.Vector3(-0.64, 0, 0.77).normalize(); pos = tgt.clone().addScaledVector(dir, d); pos.y = eye; }
     this.placeSun(pos, tgt);
     this.anim(pos, tgt, instant);
