@@ -5,6 +5,10 @@ import { LOGIN_HTML, ADMIN_HTML, SETUP_HTML } from './pages.js';
 
 const SESSION_DAYS = 30, COOKIE = 'bis_s', DOC_CHUNK = 600000, FILE_CHUNK = 1000000, MAX_DOC = 24e6, MAX_FILE_DB = 40e6, MAX_FILE_R2 = 200e6;
 const MODES = ['gradnja', 'krov', 'zemlja', 'stolarija'];
+// Inačica programa: ista vrijednost stoji u web/app.js (APP_V). Kad se razlikuju, otvorena kartica se sama osvježi.
+export const APP_V = '0.24';
+// kratki dijagnostički zapis u bazi (bez osobnih podataka osim korisničkog imena): što poslužitelj vidi i što je zadnje pošlo krivo
+const diag = (env, k, o) => env.DB.prepare('INSERT OR REPLACE INTO diag (k, v, t) VALUES (?, ?, ?)').bind(k, JSON.stringify(o).slice(0, 1500), Date.now()).run().catch(() => {});
 // AI (v0.22): ključ je tajna ANTHROPIC_API_KEY na Workeru; preglednik ga nikad ne vidi. Model i mjesečni limit po korisniku
 // zadaju se varijablama AI_MODEL i AI_MONTHLY_CAP_USD. Cijene u USD po milijun tokena: iste kao u bridgeline-agent-proxy
 // (studeni 2026.); provjeriti kad se cijene promijene.
@@ -136,7 +140,7 @@ async function ai(request, env, me) {
   let up;
   if (env.ANTHROPIC_API_KEY) up = await fetch(AI_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': AI_VERSION }, body: buf });
   else {
-    const lic = await proxyLicense(env); if (!lic) return err('AI na ovoj adresi još nije uključen.', 503);
+    const lic = await proxyLicense(env); if (!lic) { await diag(env, 'ai_greska', { status: 'nema licence u bazi posrednika' }); return err('AI na ovoj adresi još nije uključen.', 503); }
     up = await env.AI_PROXY.fetch('https://ai-proxy/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'X-License-Key': lic, 'X-Model': model, 'X-Quote-Id': ('bis-' + me.username).slice(0, 80), 'X-Quote-Label': encodeURIComponent('BIS program: ' + (me.company || me.name || me.username)).slice(0, 160), 'X-Step': 'bis' }, body: buf });
   }
   const text = await up.text(); let data = null; try { data = JSON.parse(text); } catch {}
@@ -144,7 +148,7 @@ async function ai(request, env, me) {
   await env.DB.prepare('INSERT INTO ai_month (user_id, month, cost_usd, calls) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, month) DO UPDATE SET cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1').bind(me.id, mo, cost).run();
   if (!good) {
     // korisnik ne vidi tehničke detalje; razlog koji rješava vlasnik ide u dnevnik Workera i kao kratki kod
-    console.error('AI', up.status, text.slice(0, 300));
+    console.error('AI', up.status, text.slice(0, 300)); await diag(env, 'ai_greska', { status: up.status, odgovor: text.slice(0, 400), korisnik: me.username });
     if (!env.ANTHROPIC_API_KEY) { // odgovor posrednika je već pisan za korisnika
       if (up.status === 401) proxyKey = null;
       if (up.status === 402) return err('Dosegnut je mjesečni limit AI-ja za BIS program. Javite se Bridgeline Intelligence Systems.', 402);
@@ -154,6 +158,7 @@ async function ai(request, env, me) {
     if (up.status === 429 || up.status === 529) return err('AI je trenutno zauzet. Pokušaj ponovno za minutu.', 429);
     return err(kod ? 'AI je privremeno nedostupan. Javite se Bridgeline Intelligence Systems (kod ' + kod + ').' : 'AI trenutno nije dostupan. Pokušaj ponovno za minutu.', 502);
   }
+  await diag(env, 'ai_ok', { model, ulaz: usage.input_tokens || 0, izlaz: usage.output_tokens || 0, korisnik: me.username });
   return json({ content: data.content, stop_reason: data.stop_reason });
 }
 
@@ -252,7 +257,10 @@ export default {
         if (path.startsWith('/api/')) return err('Prijava je istekla. Prijavi se ponovno.', 401);
         return (request.headers.get('accept') || '').includes('text/html') ? Response.redirect(url.origin + '/login', 302) : new Response('Potrebna je prijava.', { status: 401 });
       }
-      if (path === '/api/me') return json({ ...pub(me), ai: aiOn(env), aiModel: aiModel(env) });
+      if (path === '/api/me') {
+        await diag(env, 'me', { v: APP_V, klijent: request.headers.get('x-app-v') || 'stari', ai: aiOn(env), posrednik: !!env.AI_PROXY, bazaPosrednika: !!env.PROXY_DB, vlastitiKljuc: !!env.ANTHROPIC_API_KEY, korisnik: me.username });
+        return json({ ...pub(me), ai: aiOn(env), aiModel: aiModel(env), v: APP_V });
+      }
       if (path === '/api/ai' && method === 'POST') return await ai(request, env, me);
       if (path === '/api/password' && method === 'POST') {
         const b = await body(request); if (!okKey(b.oldKey) || !okKey(b.newKey)) return err('Lozinka nije ispravno poslana.');

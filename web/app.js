@@ -1,4 +1,4 @@
-// BIS program – v0.23
+// BIS program – v0.24
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -1621,6 +1621,7 @@ async function aiBuildModel() {
   openChat();
   if (cap.sample && cap.imagesOk) { let ready = false; pagesReady.then(() => { ready = true; }); await Promise.resolve(); if (!ready) addMsg('assistant', 'Pripremam stranice nacrta za čitanje…'); }
   await pagesReady;
+  if (WEB && (!cap.sample || !cap.imagesOk)) await webCheck();
   if (!cap.sample || !cap.imagesOk) return addMsg('sys', (WEB ? 'AI čitanje nacrta na ovoj adresi još nije uključeno.' : 'AI čitanje nacrta ovdje nije dostupno (otvori program na claude.ai i dopusti mu korištenje Claudea).') + ' 3D model možeš zadati vrstom objekta i dimenzijama.');
   aiModelBusy = true; const say = (t) => { addMsg("sys", t); aiReadLog({ ok: null, step: t }); }, num = (v) => (isFinite(+v) ? +v : null);
   try {
@@ -2251,11 +2252,25 @@ async function onJsonFile(file) {
 // Kad program ne radi unutar claude.ai, a poslužitelj poznaje prijavljenog korisnika (/api/me), podaci se spremaju
 // po korisniku na poslužitelj. Sučelje je isto kao cap.db/cap.assets/cap.dl/cap.dict pa ostatak programa ne zna razliku.
 let WEB = null;
+const APP_V = '0.24'; // ista vrijednost kao APP_V u server/worker.js
+// Otvorena kartica ne smije ostati na staroj inačici: kad poslužitelj javi noviju, program spremi rad i sam se osvježi.
+// Isto tako, ako je AI u međuvremenu uključen na poslužitelju, uključuje se i ovdje bez ponovne prijave.
+let webChecking = false;
+async function webCheck() {
+  if (!WEB || webChecking) return; webChecking = true;
+  try {
+    const r = await fetch('/api/me', { headers: { accept: 'application/json', 'x-app-v': APP_V } }); if (!r.ok) return;
+    const me = await r.json();
+    if (me.v && me.v !== APP_V) { toast('Stigla je nova inačica programa. Spremam rad i osvježavam…', 4000); try { await saveNow(); } catch {} setTimeout(() => location.reload(), 900); return; }
+    if (me.ai && !WEB.ai) { toast('AI je uključen. Osvježavam…'); try { await saveNow(); } catch {} setTimeout(() => location.reload(), 900); }
+  } catch {} finally { webChecking = false; }
+}
 async function webCaps() {
   let me = null;
-  try { const r = await fetch('/api/me', { headers: { accept: 'application/json' } }); if (r.ok && (r.headers.get('content-type') || '').includes('json')) me = await r.json(); } catch {}
+  try { const r = await fetch('/api/me', { headers: { accept: 'application/json', 'x-app-v': APP_V } }); if (r.ok && (r.headers.get('content-type') || '').includes('json')) me = await r.json(); } catch {}
   if (!me || !me.id) return;
   WEB = me;
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) webCheck(); }); setInterval(webCheck, 120000);
   DEMO_PDF_URL = '/demo/nacrti.pdf'; if (P) { (P.docs || []).forEach((d) => { if (d.demo) d.url = DEMO_PDF_URL; }); if (P.pdf && P.pdf.demo) P.pdf.url = DEMO_PDF_URL; }
   const call = async (path, opt) => { const r = await fetch(path, opt); if (r.status === 401) { location.href = '/login'; throw new Error('Prijava je istekla.'); } if (!r.ok) { let o = {}; try { o = await r.json(); } catch {} throw new Error(o.error || 'Spremanje nije uspjelo.'); } return r.json(); };
   cap.uid = me.id;

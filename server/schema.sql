@@ -8,3 +8,4 @@ CREATE TABLE IF NOT EXISTS login_fail (k TEXT NOT NULL, t INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS login_fail_k ON login_fail (k, t);
 CREATE TABLE IF NOT EXISTS ai_month (user_id TEXT NOT NULL, month TEXT NOT NULL, cost_usd REAL NOT NULL DEFAULT 0, calls INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, month));
 -- postojeća baza bez stupca ai_cap: ALTER TABLE users ADD COLUMN ai_cap REAL;
+CREATE TABLE IF NOT EXISTS diag (k TEXT PRIMARY KEY, v TEXT NOT NULL, t INTEGER NOT NULL);
