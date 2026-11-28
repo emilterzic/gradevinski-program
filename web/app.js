@@ -1,4 +1,4 @@
-// BIS program – v0.24
+// BIS program – v0.25
 // Nacrt (PDF + mjerenje) → stavke (AI prijedlog / ručno / izmjereno / potvrđeno) → troškovnik → ugovor, uz AI asistenta.
 import * as pdfjsLib from './lib/pdf.min.js';
 import * as MD from './model.js'; // model objekta, opcije izvedbe s okvirnim cijenama, količine, informativna statika
@@ -1582,10 +1582,10 @@ async function askJson(prompt, images, tier) {
   const imgs = (images || []).slice(0, cap.maxImages || 4); // platforma prima najviše 4 slike po upitu
   for (let tryNo = 0; ; tryNo++) {
     try {
-      const r = await cap.sample(prompt + '\n\nOdgovori ISKLJUČIVO jednim JSON objektom, bez teksta prije ili poslije. Sve napomene piši na hrvatskom jeziku.', { ...(imgs.length ? { images: imgs } : {}), modelTier: tier || 'default', cache: false });
+      const r = await cap.sample(prompt + '\n\nOdgovori ISKLJUČIVO jednim JSON objektom, bez teksta prije ili poslije. JSON piši zbijeno: bez uvlaka, bez novih redova i bez suvišnih razmaka; brojeve zaokruži na najviše 3 decimale. Sve napomene piši na hrvatskom jeziku.', { ...(imgs.length ? { images: imgs } : {}), modelTier: tier || 'default', cache: false });
       return jsonFrom(r.text || '');
     } catch (e) {
-      if (tryNo >= 1 || e?.code === 'not_granted') throw e;
+      if (tryNo >= 1 || e?.code === 'not_granted' || e?.code === 'too_long') throw e;
       await new Promise((res) => setTimeout(res, e?.code === 'rate_limited' ? 12000 : 1500));
     }
   }
@@ -2252,12 +2252,12 @@ async function onJsonFile(file) {
 // Kad program ne radi unutar claude.ai, a poslužitelj poznaje prijavljenog korisnika (/api/me), podaci se spremaju
 // po korisniku na poslužitelj. Sučelje je isto kao cap.db/cap.assets/cap.dl/cap.dict pa ostatak programa ne zna razliku.
 let WEB = null;
-const APP_V = '0.24'; // ista vrijednost kao APP_V u server/worker.js
+const APP_V = '0.25'; // ista vrijednost kao APP_V u server/worker.js
 // Otvorena kartica ne smije ostati na staroj inačici: kad poslužitelj javi noviju, program spremi rad i sam se osvježi.
 // Isto tako, ako je AI u međuvremenu uključen na poslužitelju, uključuje se i ovdje bez ponovne prijave.
 let webChecking = false;
 async function webCheck() {
-  if (!WEB || webChecking) return; webChecking = true;
+  if (!WEB || webChecking || aiModelBusy || busy) return; webChecking = true; // ne prekidaj AI čitanje ni razgovor
   try {
     const r = await fetch('/api/me', { headers: { accept: 'application/json', 'x-app-v': APP_V } }); if (!r.ok) return;
     const me = await r.json();
@@ -2308,12 +2308,14 @@ async function webCaps() {
       let text = '';
       for (let step = 0; step < 14; step++) {
         // „model” mora biti prvi ključ: poslužitelj provjerava samo početak tijela
-        const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, signal: o.signal, body: JSON.stringify({ model: me.aiModel, max_tokens: 8000, messages, ...(tools.length ? { tools } : {}) }) });
+        const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, signal: o.signal, body: JSON.stringify({ model: me.aiModel, max_tokens: 16000, messages, ...(tools.length ? { tools } : {}) }) });
         if (r.status === 401) { location.href = '/login'; throw new Error('Prijava je istekla.'); }
         if (!r.ok) { let e = {}; try { e = await r.json(); } catch {} throw Object.assign(new Error(e.error || 'AI trenutno nije dostupan.'), { code: r.status === 429 ? 'rate_limited' : r.status === 402 || r.status === 503 ? 'not_granted' : 'error', text }); }
         const res = await r.json(), parts = res.content || [], t = parts.filter((c) => c.type === 'text').map((c) => c.text).join('');
         if (t) { text += (text ? '\n' : '') + t; if (o.onText) o.onText({ text }); }
         const uses = parts.filter((c) => c.type === 'tool_use');
+        // odgovor odrezan na granici duljine: bolje jasna greška nego pola JSON-a
+        if (res.stop_reason === 'max_tokens' && !uses.length) throw Object.assign(new Error('Odgovor AI-ja je predug i odrezan je.'), { code: 'too_long', text });
         if (res.stop_reason !== 'tool_use' || !uses.length) break;
         messages.push({ role: 'assistant', content: parts });
         const out = [];
